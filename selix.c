@@ -9,9 +9,9 @@
 #include "php_variables.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
-#include "php_selinux.h"
+#include "php_selix.h"
 
-ZEND_DECLARE_MODULE_GLOBALS(selinux)
+ZEND_DECLARE_MODULE_GLOBALS(selix)
 
 void (*old_php_import_environment_variables)(zval *array_ptr TSRMLS_DC);
 void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC);
@@ -27,41 +27,41 @@ void *do_zend_execute( void *data );
 int set_context( char *domain, char *range );
 
 /*
- * Every user visible function must have an entry in selinux_functions[].
+ * Every user visible function must have an entry in selix_functions[].
  */
-const zend_function_entry selinux_functions[] = {
+const zend_function_entry selix_functions[] = {
 	{NULL, NULL, NULL}
 };
 
-zend_module_entry selinux_module_entry = {
+zend_module_entry selix_module_entry = {
 #if ZEND_MODULE_API_NO >= 20010901
 	STANDARD_MODULE_HEADER,
 #endif
-	"selinux",
-	selinux_functions,
-	PHP_MINIT(selinux),
-	PHP_MSHUTDOWN(selinux),
-	PHP_RINIT(selinux),
-	PHP_RSHUTDOWN(selinux),
-	PHP_MINFO(selinux),
+	"selix",
+	selix_functions,
+	PHP_MINIT(selix),
+	PHP_MSHUTDOWN(selix),
+	PHP_RINIT(selix),
+	PHP_RSHUTDOWN(selix),
+	PHP_MINFO(selix),
 #if ZEND_MODULE_API_NO >= 20010901
 	"0.1",
 #endif
 	STANDARD_MODULE_PROPERTIES
 };
 
-#ifdef COMPILE_DL_SELINUX
-ZEND_GET_MODULE(selinux)
+#ifdef COMPILE_DL_SELIX
+ZEND_GET_MODULE(selix)
 #endif
 
-PHP_MINIT_FUNCTION(selinux)
+PHP_MINIT_FUNCTION(selix)
 {
 	int ret;
 	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
 
 	// Adds FastCGI parameters to catch
-	SELINUX_G(separams_names[PARAM_DOMAIN_IDX]) = PARAM_DOMAIN_NAME;
-	SELINUX_G(separams_names[PARAM_RANGE_IDX]) = PARAM_RANGE_NAME;
+	SELIX_G(separams_names[PARAM_DOMAIN_IDX]) = PARAM_DOMAIN_NAME;
+	SELIX_G(separams_names[PARAM_RANGE_IDX]) = PARAM_RANGE_NAME;
 
 	ret = is_selinux_enabled();
 	if (!ret)
@@ -85,12 +85,12 @@ PHP_MINIT_FUNCTION(selinux)
 	return SUCCESS;
 }
 
-PHP_MSHUTDOWN_FUNCTION(selinux)
+PHP_MSHUTDOWN_FUNCTION(selix)
 {
 	return SUCCESS;
 }
 
-PHP_RINIT_FUNCTION(selinux)
+PHP_RINIT_FUNCTION(selix)
 {
 	if (is_selinux_enabled() < 1)
 		return SUCCESS;
@@ -110,14 +110,14 @@ PHP_RINIT_FUNCTION(selinux)
 	return SUCCESS;
 }
 
-PHP_RSHUTDOWN_FUNCTION(selinux)
+PHP_RSHUTDOWN_FUNCTION(selix)
 {
 	int i;
 	
 	// Dealloc parameters
 	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
-		if (SELINUX_G(separams_values[i]))
-			efree( SELINUX_G(separams_values[i]) );
+		if (SELIX_G(separams_values[i]))
+			efree( SELIX_G(separams_values[i]) );
 	
 	if (is_selinux_enabled() < 1)
 		return SUCCESS;
@@ -130,7 +130,7 @@ PHP_RSHUTDOWN_FUNCTION(selinux)
 	return SUCCESS;
 }
 
-PHP_MINFO_FUNCTION(selinux)
+PHP_MINFO_FUNCTION(selix)
 {
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
@@ -180,7 +180,7 @@ void *do_zend_compile_file( void *data )
 {
 	zend_compile_args *args = (zend_compile_args *)data;
 	
-	set_context( SELINUX_G(separams_values[PARAM_DOMAIN_IDX]), SELINUX_G(separams_values[PARAM_RANGE_IDX]) );
+	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) );
 	
 	return old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
 }
@@ -224,7 +224,7 @@ void *do_zend_execute( void *data )
 {
 	zend_op_array *op_array = (zend_op_array *)data;
 	
-	set_context( SELINUX_G(separams_values[PARAM_DOMAIN_IDX]), SELINUX_G(separams_values[PARAM_RANGE_IDX]) );
+	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) );
 	old_zend_execute( op_array TSRMLS_CC );
 	
 	return NULL;
@@ -335,21 +335,21 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 				 * Apache mod_fastcgi adds a parameter for every SetEnv <name> <value>
 				 * in the form of "REDIRECT_<name>". These need to be hidden too.
 				 */
-				int redirect_len = strlen("REDIRECT_") + strlen( SELINUX_G(separams_names[i]) ) + 1;
+				int redirect_len = strlen("REDIRECT_") + strlen( SELIX_G(separams_names[i]) ) + 1;
 				char *redirect_param = (char *) emalloc( redirect_len );
 				
 				memset( redirect_param, 0, redirect_len );
 				strcat( redirect_param, "REDIRECT_" );
-				strcat( redirect_param, SELINUX_G(separams_names[i]) );
+				strcat( redirect_param, SELIX_G(separams_names[i]) );
 					
-				if (!strncmp( key, SELINUX_G(separams_names[i]), strlen( SELINUX_G(separams_names[i]) )))
+				if (!strncmp( key, SELIX_G(separams_names[i]), strlen( SELIX_G(separams_names[i]) )))
 				{
 					// TODO handle of other types (int, null, etc) if needed
 					if (Z_TYPE_PP(data) == IS_STRING)
-					SELINUX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
+					SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
 					
 					// @DEBUG
-					// asprintf( &str, "[*] Got %s => %s <br>", SELINUX_G(separams_names[i]), SELINUX_G(separams_values[i]) );
+					// asprintf( &str, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
 					// php_write( str, strlen(str) );
 					// free(str);
 					
