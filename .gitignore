@@ -1,0 +1,13 @@
+# JetBrains
+.idea/
+
+# OS X
+.DS_Store
+.AppleDouble/
+._*
+*.bak
+
+# TextMate project
+*.tmproj
+
+# Project
