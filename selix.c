@@ -92,8 +92,14 @@ PHP_MSHUTDOWN_FUNCTION(selix)
 
 PHP_RINIT_FUNCTION(selix)
 {
+	int i;
+	
 	if (is_selinux_enabled() < 1)
 		return SUCCESS;
+	
+	// Reset parameters
+	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
+		SELIX_G(separams_values[i]) = NULL;
 	
 	/* Override php_import_environment_variables ( main/php_variables.c:824 ) */
 	old_php_import_environment_variables = php_import_environment_variables;
@@ -106,7 +112,7 @@ PHP_RINIT_FUNCTION(selix)
 	/* Override zend_compile_file to check read permission on it for currenct SELinux domain */
 	old_zend_compile_file = zend_compile_file;
 	zend_compile_file = selinux_zend_compile_file;
-		
+	
 	return SUCCESS;
 }
 
@@ -258,8 +264,43 @@ int set_context( char *domain, char *range )
 	free(str);
 	
 	// Sets values for the new context
-	context_type_set( context, domain );
-	context_range_set( context,  range );
+	if (domain && strlen(domain) > 0 && range && strlen(range) > 0)
+	{
+		// @DEBUG
+		// asprintf( &str, "[SC] Setting both domain and range to %s:%s at 0x%x - 0x%x<br>", domain, range, domain, range );
+		// php_write( str, strlen(str) );
+		// free(str);
+		
+		context_type_set( context, domain );
+		context_range_set( context,  range );	
+	}
+
+	else if (domain && strlen(domain) > 0 && (!range || strlen(range) < 1))
+	{
+		// @DEBUG
+		// asprintf( &str, "[SC] Setting domain only to %s at 0x%x<br>", domain, domain );
+		// php_write( str, strlen(str) );
+		// free(str);
+		
+		// Domain only
+		context_type_set( context, domain );		
+	}
+	else if ((!domain || strlen(domain) < 1) && range && strlen(range) > 0)
+	{
+		// @DEBUG
+		// asprintf( &str, "[SC] Setting range only to %s at 0x%x<br>", range, range );
+		// php_write( str, strlen(str) );
+		// free(str);
+		
+		// Range only
+		context_range_set( context,  range );
+	}
+	else
+	{
+		// Executes in current (default) context if neither domain nor range is defined
+		// @TODO ini directive to allow/deny execution of scripts without specific context
+		return 0;
+	}	
 	
 	// Gets a pointer to a string representing the context_t
 	new_ctx = context_str( context );
