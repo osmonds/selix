@@ -12,6 +12,7 @@
 #include "php_selix.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(selix)
+static PHP_GINIT_FUNCTION(selix);
 
 void (*old_php_import_environment_variables)(zval *array_ptr TSRMLS_DC);
 void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC);
@@ -54,12 +55,28 @@ zend_module_entry selix_module_entry = {
 ZEND_GET_MODULE(selix)
 #endif
 
+// ini settings
+PHP_INI_BEGIN()
+STD_PHP_INI_BOOLEAN("selix.force_context_change", "0", PHP_INI_SYSTEM, OnUpdateBool, force_context_change, zend_selix_globals, selix_globals)
+PHP_INI_END()
+
+/*
+ * Called *only* when a new process or thread is started.
+ * Each process can serve more than one request, so it's not called in subsequent requests.
+ */
+static PHP_GINIT_FUNCTION(selix)
+{
+	selix_globals->force_context_change = 0;
+}
+
 PHP_MINIT_FUNCTION(selix)
 {
 	int ret;
 	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
 
-	// Adds FastCGI parameters to catch
+	REGISTER_INI_ENTRIES();
+	
+	// Assigns FastCGI parameters name
 	SELIX_G(separams_names[PARAM_DOMAIN_IDX]) = PARAM_DOMAIN_NAME;
 	SELIX_G(separams_names[PARAM_RANGE_IDX]) = PARAM_RANGE_NAME;
 
@@ -87,6 +104,8 @@ PHP_MINIT_FUNCTION(selix)
 
 PHP_MSHUTDOWN_FUNCTION(selix)
 {
+	UNREGISTER_INI_ENTRIES();
+	
 	return SUCCESS;
 }
 
@@ -97,7 +116,7 @@ PHP_RINIT_FUNCTION(selix)
 	if (is_selinux_enabled() < 1)
 		return SUCCESS;
 	
-	// Reset parameters
+	// Initialize parameters
 	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
 		SELIX_G(separams_values[i]) = NULL;
 	
@@ -140,6 +159,7 @@ PHP_MINFO_FUNCTION(selix)
 {
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
+	php_info_print_table_row(2, "Force context change", SELIX_G(force_context_change)? "On":"Off");
 	php_info_print_table_end();
 }
 
@@ -190,7 +210,6 @@ void *do_zend_compile_file( void *data )
 	
 	return old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
 }
-
 
 /*
  * zend_execute() handler
@@ -297,9 +316,9 @@ int set_context( char *domain, char *range )
 	}
 	else
 	{
-		// Executes in current (default) context if neither domain nor range is defined
-		// @TODO ini directive to allow/deny execution of scripts without specific context
-		return 0;
+		// Execute in default security context if neither domain nor range is defined
+		if (SELIX_G(force_context_change))
+			php_error_docref(NULL TSRMLS_CC, E_ERROR, "Executing scripts in default security context is disabled. See selix.force_context_change");
 	}	
 	
 	// Gets a pointer to a string representing the context_t

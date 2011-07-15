@@ -36,6 +36,7 @@ PHP_MINFO_FUNCTION(selix);
 ZEND_BEGIN_MODULE_GLOBALS(selix)
 	char *separams_names[SELINUX_PARAMS_COUNT];
 	char *separams_values[SELINUX_PARAMS_COUNT];
+	zend_bool force_context_change;
 ZEND_END_MODULE_GLOBALS(selix)
 
 #ifdef ZTS
