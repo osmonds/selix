@@ -48,7 +48,11 @@ zend_module_entry selix_module_entry = {
 #if ZEND_MODULE_API_NO >= 20010901
 	"0.1",
 #endif
-	STANDARD_MODULE_PROPERTIES
+	PHP_MODULE_GLOBALS(selix),
+	PHP_GINIT(selix),
+	NULL,
+	NULL,
+	STANDARD_MODULE_PROPERTIES_EX
 };
 
 #ifdef COMPILE_DL_SELIX
@@ -61,8 +65,7 @@ STD_PHP_INI_BOOLEAN("selix.force_context_change", "0", PHP_INI_SYSTEM, OnUpdateB
 PHP_INI_END()
 
 /*
- * Called *only* when a new process or thread is started.
- * Each process can serve more than one request, so it's not called in subsequent requests.
+ * Called to initialize a module's globals before PHP_MINIT_FUNCTION. 
  */
 static PHP_GINIT_FUNCTION(selix)
 {
@@ -159,7 +162,8 @@ PHP_MINFO_FUNCTION(selix)
 {
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
-	php_info_print_table_row(2, "Force context change", SELIX_G(force_context_change)? "On":"Off");
+	php_info_print_table_row(2, "Compiled on", __DATE__ " at " __TIME__);
+	php_info_print_table_row(2, "Force context change", SELIX_G(force_context_change)? "On":"Off");	
 	php_info_print_table_end();
 }
 
@@ -368,7 +372,6 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 {
 	zval **data;
 	HashTable *arr_hash;
-	HashPosition pointer;
 	int i;
 	char *str;
 	
@@ -379,21 +382,20 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 	old_php_import_environment_variables( array_ptr TSRMLS_CC );
 	
 	arr_hash = Z_ARRVAL_P(array_ptr);
-	for (zend_hash_internal_pointer_reset_ex(arr_hash, &pointer ); 
-		zend_hash_get_current_data_ex(arr_hash, (void**) &data, &pointer) == SUCCESS; 
-		zend_hash_move_forward_ex(arr_hash, &pointer))
+	zend_hash_internal_pointer_reset_ex( arr_hash, NULL );
+	while (zend_hash_get_current_data_ex(arr_hash, (void**) &data, NULL) == SUCCESS)
 	{
 		char *key;
 		int key_len;
 		long index;
 		
-		if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, &pointer) == HASH_KEY_IS_STRING)
+		if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING)
 		{
 			for (i=0; i < SELINUX_PARAMS_COUNT; i++)
 			{
 				/*
 				 * Apache mod_fastcgi adds a parameter for every SetEnv <name> <value>
-				 * in the form of "REDIRECT_<name>". These need to be hidden too.
+				 * in the form of "REDIRECT_<name>". These need to be hidden.
 				 */
 				int redirect_len = strlen("REDIRECT_") + strlen( SELIX_G(separams_names[i]) ) + 1;
 				char *redirect_param = (char *) emalloc( redirect_len );
@@ -414,15 +416,22 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 					// free(str);
 					
 					// Hide <selinux_param>
-					zend_hash_del(arr_hash, key, strlen(key) + 1);
+					zend_hash_move_backwards_ex( arr_hash, NULL );
+					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
+					continue;
 				}
-				
-				// Hide REDIRECT_<selinux_param> entries
 				if (!strncmp( key, redirect_param, redirect_len ))
-					zend_hash_del(arr_hash, key, strlen(key) + 1);
+				{
+					// Hide REDIRECT_<selinux_param> entries
+					zend_hash_move_backwards_ex( arr_hash, NULL );
+					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
+					continue;
+				}
 				
 				efree( redirect_param );
 			}
 		}
+		
+		zend_hash_move_forward_ex( arr_hash, NULL );
 	}
 }
