@@ -25,7 +25,17 @@ extern zend_module_entry selix_module_entry;
 typedef struct _zend_compile_args {
 	zend_file_handle *file_handle;
 	int type;
+#ifdef ZTS
+	TSRMLS_D;
+#endif
 } zend_compile_args;
+
+typedef struct _zend_execute_args {
+	zend_op_array *op_array;
+#ifdef ZTS
+	TSRMLS_D;
+#endif
+} zend_execute_args;
 
 PHP_MINIT_FUNCTION(selix);
 PHP_MSHUTDOWN_FUNCTION(selix);

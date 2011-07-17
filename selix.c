@@ -25,7 +25,7 @@ zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type
 
 void *do_zend_compile_file( void *data );
 void *do_zend_execute( void *data );
-int set_context( char *domain, char *range );
+int set_context( char *domain, char *range TSRMLS_DC );
 
 /*
  * Every user visible function must have an entry in selix_functions[].
@@ -173,9 +173,9 @@ PHP_MINFO_FUNCTION(selix)
 zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC)
 {
 	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
+	pthread_t compile_thread;
 	zend_compile_args args;
 	void *compiled_op_array;
-	pthread_t execute_thread;
 	char *str;
 	
 	if (jit_initialization)
@@ -187,15 +187,18 @@ zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type
 	
 	// @DEBUG
 	asprintf( &str, "[*] Compiling %s <br>", file_handle->filename );
-	php_write( str, strlen(str) );
+	php_write( str, strlen(str) TSRMLS_CC );
 	free(str);
 	
 	args.file_handle = file_handle;
 	args.type = type;
-	if (pthread_create( &execute_thread, NULL, do_zend_compile_file, &args ))
+#ifdef ZTS
+	args.tsrm_ls = TSRMLS_C;
+#endif
+	if (pthread_create( &compile_thread, NULL, do_zend_compile_file, &args ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
 
-	if (pthread_join( execute_thread, &compiled_op_array ))
+	if (pthread_join( compile_thread, &compiled_op_array ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
 
 	return (zend_op_array *)compiled_op_array;
@@ -209,8 +212,11 @@ zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type
 void *do_zend_compile_file( void *data )
 {
 	zend_compile_args *args = (zend_compile_args *)data;
+#ifdef ZTS
+	TSRMLS_D = args->tsrm_ls;
+#endif
 	
-	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) );
+	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
 	
 	return old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
 }
@@ -222,6 +228,7 @@ void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	static int nesting = 0;
 	pthread_t execute_thread;
+	zend_execute_args args;
 	char *str;
 	
 	// Nested calls are already executed in proper security context
@@ -232,10 +239,14 @@ void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC)
 	
 	// @DEBUG
 	asprintf( &str, "[*] Executing in proper security context %s<br>", op_array->filename );
-	php_write( str, strlen(str) );
+	php_write( str, strlen(str) TSRMLS_CC );
 	free(str);
 	
-	if (pthread_create( &execute_thread, NULL, do_zend_execute, op_array ))
+	args.op_array = op_array;
+#ifdef ZTS
+	args.tsrm_ls = TSRMLS_C;
+#endif
+	if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
 
 	if (pthread_join( execute_thread, NULL ))
@@ -251,10 +262,13 @@ void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC)
  */
 void *do_zend_execute( void *data )
 {
-	zend_op_array *op_array = (zend_op_array *)data;
+	zend_execute_args *args = (zend_execute_args *)data;
+#ifdef ZTS
+	TSRMLS_D = args->tsrm_ls;
+#endif
 	
-	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) );
-	old_zend_execute( op_array TSRMLS_CC );
+	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
+	old_zend_execute( args->op_array TSRMLS_CC );
 	
 	return NULL;
 }
@@ -263,7 +277,7 @@ void *do_zend_execute( void *data )
  * It sets the security context of the calling thread to the new one received from
  * environment variables.
  */
-int set_context( char *domain, char *range )
+int set_context( char *domain, char *range TSRMLS_DC )
 {
 	security_context_t current_ctx, new_ctx;
 	context_t context;
@@ -283,7 +297,7 @@ int set_context( char *domain, char *range )
 	
 	// @DEBUG
 	asprintf( &str, "[SC] Current context: %s<br>", current_ctx );
-	php_write( str, strlen(str) );
+	php_write( str, strlen(str) TSRMLS_CC );
 	free(str);
 	
 	// Sets values for the new context
@@ -291,7 +305,7 @@ int set_context( char *domain, char *range )
 	{
 		// @DEBUG
 		// asprintf( &str, "[SC] Setting both domain and range to %s:%s at 0x%x - 0x%x<br>", domain, range, domain, range );
-		// php_write( str, strlen(str) );
+		// php_write( str, strlen(str) TSRMLS_CC );
 		// free(str);
 		
 		context_type_set( context, domain );
@@ -302,7 +316,7 @@ int set_context( char *domain, char *range )
 	{
 		// @DEBUG
 		// asprintf( &str, "[SC] Setting domain only to %s at 0x%x<br>", domain, domain );
-		// php_write( str, strlen(str) );
+		// php_write( str, strlen(str) TSRMLS_CC );
 		// free(str);
 		
 		// Domain only
@@ -312,7 +326,7 @@ int set_context( char *domain, char *range )
 	{
 		// @DEBUG
 		// asprintf( &str, "[SC] Setting range only to %s at 0x%x<br>", range, range );
-		// php_write( str, strlen(str) );
+		// php_write( str, strlen(str) TSRMLS_CC );
 		// free(str);
 		
 		// Range only
@@ -338,7 +352,7 @@ int set_context( char *domain, char *range )
 	{
 		// @DEBUG
 		asprintf( &str, "[SC] No context chages made<br>", new_ctx );
-		php_write( str, strlen(str) );
+		php_write( str, strlen(str) TSRMLS_CC );
 		free(str);
 
 		context_free( context );
@@ -356,7 +370,7 @@ int set_context( char *domain, char *range )
 	
 	// @DEBUG
 	asprintf( &str, "[SC] New context: %s<br>", new_ctx );
-	php_write( str, strlen(str) );
+	php_write( str, strlen(str) TSRMLS_CC );
 	free(str);
 	
 	// Free previously allocated context_t and so the new_ctx pointer isn't valid anymore
@@ -412,7 +426,7 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 					
 					// @DEBUG
 					// asprintf( &str, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
-					// php_write( str, strlen(str) );
+					// php_write( str, strlen(str) TSRMLS_CC );
 					// free(str);
 					
 					// Hide <selinux_param>
