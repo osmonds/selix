@@ -15,13 +15,13 @@ ZEND_DECLARE_MODULE_GLOBALS(selix)
 static PHP_GINIT_FUNCTION(selix);
 
 void (*old_php_import_environment_variables)(zval *array_ptr TSRMLS_DC);
-void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC);
+void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC);
 
 void (*old_zend_execute)(zend_op_array *op_array TSRMLS_DC);
-void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC);
+void selix_zend_execute(zend_op_array *op_array TSRMLS_DC);
 
 zend_op_array *(*old_zend_compile_file)(zend_file_handle *file_handle, int type TSRMLS_DC);
-zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC);
+zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC);
 
 void *do_zend_compile_file( void *data );
 void *do_zend_execute( void *data );
@@ -126,15 +126,15 @@ PHP_RINIT_FUNCTION(selix)
 	
 	/* Override php_import_environment_variables ( main/php_variables.c:824 ) */
 	old_php_import_environment_variables = php_import_environment_variables;
-	php_import_environment_variables = selinux_php_import_environment_variables;
+	php_import_environment_variables = selix_php_import_environment_variables;
 	
 	/* Override zend_compile_file to check read permission on it for currenct SELinux domain */
 	old_zend_compile_file = zend_compile_file;
-	zend_compile_file = selinux_zend_compile_file;
+	zend_compile_file = selix_zend_compile_file;
 	
 	/* Override zend_execute to execute it in a SELinux context */
 	old_zend_execute = zend_execute;
-	zend_execute = selinux_zend_execute;
+	zend_execute = selix_zend_execute;
 	
 	return SUCCESS;
 }
@@ -171,7 +171,7 @@ PHP_MINFO_FUNCTION(selix)
 /*
  * zend_compile_file() handler
  */
-zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC)
+zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC)
 {
 	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
 	pthread_t compile_thread;
@@ -203,7 +203,7 @@ zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type
 
 /*
  * Executed in a thread.
- * It uses selinux_set_domain in order to transition to the proper security domain,
+ * It uses set_context in order to transition to the proper security context,
  * then calls zend_compile_file()
  */
 void *do_zend_compile_file( void *data )
@@ -222,7 +222,7 @@ void *do_zend_compile_file( void *data )
 /*
  * zend_execute() handler
  */
-void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC)
+void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	static int nesting = 0;
 	pthread_t execute_thread;
@@ -251,7 +251,7 @@ void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC)
 
 /*
  * Executed in a thread.
- * It uses selinux_set_domain in order to transition to the proper security domain,
+ * It uses set_context in order to transition to the proper security context,
  * then calls zend_execute()
  */
 void *do_zend_execute( void *data )
@@ -351,7 +351,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 /*
  * It gets SELinux related values from environment variables.
  */
-void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
+void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 {
 	zval **data;
 	HashTable *arr_hash;
