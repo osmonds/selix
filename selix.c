@@ -418,11 +418,14 @@ void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
 {
 	va_list args;
+	char *str;
 	
 #if (SELIX_DEBUG == 0)
 	return;
 #endif
 	va_start(args, format);
-	php_verror(docref, "", E_NOTICE, format, args TSRMLS_CC);
+	vasprintf( &str, format, args );
+	php_write( str, strlen(str) TSRMLS_CC );
+	free(str);
 	va_end(args);
 }
