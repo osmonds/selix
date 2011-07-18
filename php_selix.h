@@ -7,6 +7,9 @@
 #define PARAM_RANGE_IDX		1
 #define PARAM_RANGE_NAME	"SELINUX_RANGE"
 
+// Debug
+#define SELIX_DEBUG 	1
+
 extern zend_module_entry selix_module_entry;
 #define phpext_selix_ptr &selix_module_entry
 

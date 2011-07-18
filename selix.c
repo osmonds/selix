@@ -209,12 +209,13 @@ zend_op_array *selinux_zend_compile_file(zend_file_handle *file_handle, int type
 void *do_zend_compile_file( void *data )
 {
 	zend_compile_args *args = (zend_compile_args *)data;
+	
 #ifdef ZTS
-	TSRMLS_D = args->tsrm_ls;
+	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
+	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
 	
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
-	
 	return old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
 }
 
@@ -256,10 +257,12 @@ void selinux_zend_execute(zend_op_array *op_array TSRMLS_DC)
 void *do_zend_execute( void *data )
 {
 	zend_execute_args *args = (zend_execute_args *)data;
-#ifdef ZTS
-	TSRMLS_D = args->tsrm_ls;
-#endif
 	
+#ifdef ZTS
+	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
+	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
+#endif
+
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
 	old_zend_execute( args->op_array TSRMLS_CC );
 	
@@ -291,8 +294,6 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	// Sets values for the new context
 	if (domain && strlen(domain) > 0 && range && strlen(range) > 0)
 	{
-		selix_debug(NULL TSRMLS_CC, "[SC] Setting both domain and range to %s:%s at 0x%x - 0x%x<br>", domain, range, domain, range );		
-		
 		// Both domain and range
 		context_type_set( context, domain );
 		context_range_set( context,  range );	
@@ -300,15 +301,11 @@ int set_context( char *domain, char *range TSRMLS_DC )
 
 	else if (domain && strlen(domain) > 0 && (!range || strlen(range) < 1))
 	{
-		selix_debug(NULL TSRMLS_CC, "[SC] Setting domain only to %s at 0x%x<br>", domain, domain );
-		
 		// Domain only
 		context_type_set( context, domain );		
 	}
 	else if ((!domain || strlen(domain) < 1) && range && strlen(range) > 0)
 	{
-		selix_debug(NULL TSRMLS_CC, "[SC] Setting range only to %s at 0x%x<br>", range, range );
-		
 		// Range only
 		context_range_set( context,  range );
 	}
@@ -395,7 +392,7 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 					if (Z_TYPE_PP(data) == IS_STRING)
 					SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
 					
-					selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
+					// selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
 					
 					// Hide <selinux_param>
 					zend_hash_move_backwards_ex( arr_hash, NULL );
@@ -421,7 +418,10 @@ void selinux_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
 {
 	va_list args;
-
+	
+#if (SELIX_DEBUG == 0)
+	return;
+#endif
 	va_start(args, format);
 	php_verror(docref, "", E_NOTICE, format, args TSRMLS_CC);
 	va_end(args);
