@@ -63,6 +63,7 @@ ZEND_GET_MODULE(selix)
 // ini settings
 PHP_INI_BEGIN()
 STD_PHP_INI_BOOLEAN("selix.force_context_change", "0", PHP_INI_SYSTEM, OnUpdateBool, force_context_change, zend_selix_globals, selix_globals)
+STD_PHP_INI_BOOLEAN("selix.verbose", "0", PHP_INI_ALL, OnUpdateBool, verbose, zend_selix_globals, selix_globals)
 PHP_INI_END()
 
 /*
@@ -71,6 +72,7 @@ PHP_INI_END()
 static PHP_GINIT_FUNCTION(selix)
 {
 	selix_globals->force_context_change = 0;
+	selix_globals->verbose = 0;
 }
 
 PHP_MINIT_FUNCTION(selix)
@@ -164,7 +166,8 @@ PHP_MINFO_FUNCTION(selix)
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
 	php_info_print_table_row(2, "Compiled on", __DATE__ " at " __TIME__);
-	php_info_print_table_row(2, "Force context change", SELIX_G(force_context_change)? "On":"Off");	
+	php_info_print_table_row(2, "Force context change", SELIX_G(force_context_change)? "On":"Off");
+	php_info_print_table_row(2, "Verbose output", SELIX_G(verbose)? "On":"Off");
 	php_info_print_table_end();
 }
 
@@ -419,10 +422,10 @@ void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
 {
 	va_list args;
 	char *str;
-	
-#if (SELIX_DEBUG == 0)
-	return;
-#endif
+
+	if (!SELIX_G(verbose))
+		return;
+
 	va_start(args, format);
 	vasprintf( &str, format, args );
 	php_write( str, strlen(str) TSRMLS_CC );
