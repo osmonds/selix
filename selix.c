@@ -368,53 +368,51 @@ void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 	old_php_import_environment_variables( array_ptr TSRMLS_CC );
 	
 	arr_hash = Z_ARRVAL_P(array_ptr);
-	zend_hash_internal_pointer_reset_ex( arr_hash, NULL );
-	while (zend_hash_get_current_data_ex(arr_hash, (void**) &data, NULL) == SUCCESS)
+	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
 	{
-		char *key;
-		int key_len;
-		long index;
-		
-		if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING)
+		/*
+		 * Apache mod_fastcgi adds a parameter for every SetEnv <name> <value>
+		 * in the form of "REDIRECT_<name>". These need to be hidden.
+		 */
+		int redirect_len = strlen("REDIRECT_") + strlen( SELIX_G(separams_names[i]) ) + 1;
+		char *redirect_param = (char *) emalloc( redirect_len );
+
+		memset( redirect_param, 0, redirect_len );
+		strcat( redirect_param, "REDIRECT_" );
+		strcat( redirect_param, SELIX_G(separams_names[i]) );
+
+		zend_hash_internal_pointer_reset_ex( arr_hash, NULL );
+		while (zend_hash_get_current_data_ex(arr_hash, (void**) &data, NULL) == SUCCESS)
 		{
-			for (i=0; i < SELINUX_PARAMS_COUNT; i++)
-			{
-				/*
-				 * Apache mod_fastcgi adds a parameter for every SetEnv <name> <value>
-				 * in the form of "REDIRECT_<name>". These need to be hidden.
-				 */
-				int redirect_len = strlen("REDIRECT_") + strlen( SELIX_G(separams_names[i]) ) + 1;
-				char *redirect_param = (char *) emalloc( redirect_len );
-				
-				memset( redirect_param, 0, redirect_len );
-				strcat( redirect_param, "REDIRECT_" );
-				strcat( redirect_param, SELIX_G(separams_names[i]) );
-					
+			char *key;
+			int key_len;
+			long index;
+		
+			if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING)
+			{			
 				if (!strncmp( key, SELIX_G(separams_names[i]), strlen( SELIX_G(separams_names[i]) )))
 				{
 					if (Z_TYPE_PP(data) == IS_STRING)
 					SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
-					
+			
 					// selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
-					
+			
 					// Hide <selinux_param>
-					zend_hash_move_backwards_ex( arr_hash, NULL );
 					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
 					continue;
 				}
 				if (!strncmp( key, redirect_param, redirect_len ))
 				{
 					// Hide REDIRECT_<selinux_param> entries
-					zend_hash_move_backwards_ex( arr_hash, NULL );
 					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
 					continue;
 				}
-				
-				efree( redirect_param );
 			}
+			
+			zend_hash_move_forward_ex( arr_hash, NULL );
 		}
 		
-		zend_hash_move_forward_ex( arr_hash, NULL );
+		efree( redirect_param );
 	}
 }
 
