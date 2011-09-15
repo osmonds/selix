@@ -64,6 +64,8 @@ ZEND_GET_MODULE(selix)
 PHP_INI_BEGIN()
 STD_PHP_INI_BOOLEAN("selix.force_context_change", "0", PHP_INI_SYSTEM, OnUpdateBool, force_context_change, zend_selix_globals, selix_globals)
 STD_PHP_INI_BOOLEAN("selix.verbose", "0", PHP_INI_ALL, OnUpdateBool, verbose, zend_selix_globals, selix_globals)
+STD_PHP_INI_ENTRY("selix.selinux_domain_env", "SELINUX_DOMAIN", PHP_INI_SYSTEM, OnUpdateString, selinux_domain_env, zend_selix_globals, selix_globals)
+STD_PHP_INI_ENTRY("selix.selinux_range_env", "SELINUX_RANGE", PHP_INI_SYSTEM, OnUpdateString, selinux_range_env, zend_selix_globals, selix_globals)
 PHP_INI_END()
 
 /*
@@ -71,8 +73,7 @@ PHP_INI_END()
  */
 static PHP_GINIT_FUNCTION(selix)
 {
-	selix_globals->force_context_change = 0;
-	selix_globals->verbose = 0;
+	// selix_globals->force_context_change = 0;
 }
 
 PHP_MINIT_FUNCTION(selix)
@@ -82,9 +83,10 @@ PHP_MINIT_FUNCTION(selix)
 
 	REGISTER_INI_ENTRIES();
 	
-	// Assigns FastCGI parameters name
-	SELIX_G(separams_names[PARAM_DOMAIN_IDX]) = PARAM_DOMAIN_NAME;
-	SELIX_G(separams_names[PARAM_RANGE_IDX]) = PARAM_RANGE_NAME;
+	if (SELIX_G(selinux_domain_env) && strlen(SELIX_G(selinux_domain_env)) > 0)
+		SELIX_G(separams_names[PARAM_DOMAIN_IDX]) = SELIX_G(selinux_domain_env);
+	if (SELIX_G(selinux_range_env) && strlen(SELIX_G(selinux_range_env)) > 0)
+		SELIX_G(separams_names[PARAM_RANGE_IDX]) = SELIX_G(selinux_range_env);
 
 	ret = is_selinux_enabled();
 	if (!ret)
@@ -166,8 +168,10 @@ PHP_MINFO_FUNCTION(selix)
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
 	php_info_print_table_row(2, "Compiled on", __DATE__ " at " __TIME__);
-	php_info_print_table_row(2, "Force context change", SELIX_G(force_context_change)? "On":"Off");
-	php_info_print_table_row(2, "Verbose output", SELIX_G(verbose)? "On":"Off");
+	php_info_print_table_row(2, "selinux_domain_env", SELIX_G(selinux_domain_env));
+	php_info_print_table_row(2, "selinux_range_env", SELIX_G(selinux_range_env));
+	php_info_print_table_row(2, "force_context_change", SELIX_G(force_context_change)? "On":"Off");
+	php_info_print_table_row(2, "verbose", SELIX_G(verbose)? "On":"Off");
 	php_info_print_table_end();
 }
 
@@ -390,7 +394,7 @@ void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 		
 			if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING)
 			{			
-				if (!strncmp( key, SELIX_G(separams_names[i]), strlen( SELIX_G(separams_names[i]) )))
+				if (!strcmp( key, SELIX_G(separams_names[i]) ))
 				{
 					if (Z_TYPE_PP(data) == IS_STRING)
 					SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
@@ -401,7 +405,7 @@ void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
 					continue;
 				}
-				if (!strncmp( key, redirect_param, redirect_len ))
+				if (!strcmp( key, redirect_param ))
 				{
 					// Hide REDIRECT_<selinux_param> entries
 					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one

@@ -3,9 +3,7 @@
 
 #define SELINUX_PARAMS_COUNT		2
 #define PARAM_DOMAIN_IDX	0
-#define PARAM_DOMAIN_NAME	"SELINUX_DOMAIN"
 #define PARAM_RANGE_IDX		1
-#define PARAM_RANGE_NAME	"SELINUX_RANGE"
 
 extern zend_module_entry selix_module_entry;
 #define phpext_selix_ptr &selix_module_entry
@@ -48,6 +46,8 @@ ZEND_BEGIN_MODULE_GLOBALS(selix)
 	char *separams_values[SELINUX_PARAMS_COUNT];
 	zend_bool force_context_change;
 	zend_bool verbose;
+	char *selinux_domain_env;
+	char *selinux_range_env;
 ZEND_END_MODULE_GLOBALS(selix)
 
 #ifdef ZTS
