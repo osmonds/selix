@@ -204,6 +204,10 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 
 	if (pthread_join( compile_thread, &compiled_op_array ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
+	
+	// Upon compile error it propagates the exception to caller
+	if (CG(unclean_shutdown))
+		zend_bailout();
 
 	return (zend_op_array *)compiled_op_array;
 }
@@ -216,6 +220,7 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 void *do_zend_compile_file( void *data )
 {
 	zend_compile_args *args = (zend_compile_args *)data;
+	zend_op_array *compiled_op_array = NULL;
 	
 #ifdef ZTS
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
@@ -223,7 +228,14 @@ void *do_zend_compile_file( void *data )
 #endif
 	
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
-	return old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
+	
+	// Catch compile errors
+	zend_try {
+		compiled_op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
+	}
+	zend_end_try();
+	
+	return compiled_op_array;
 }
 
 /*
@@ -303,7 +315,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		// Both domain and range
 		context_type_set( context, domain );
-		context_range_set( context,  range );	
+		context_range_set( context, range );	
 	}
 
 	else if (domain && strlen(domain) > 0 && (!range || strlen(range) < 1))
@@ -314,7 +326,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	else if ((!domain || strlen(domain) < 1) && range && strlen(range) > 0)
 	{
 		// Range only
-		context_range_set( context,  range );
+		context_range_set( context, range );
 	}
 	else
 	{
