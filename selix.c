@@ -226,9 +226,9 @@ void *do_zend_compile_file( void *data )
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
-	
-	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
-	
+
+	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );	
+
 	// Catch compile errors
 	zend_try {
 		compiled_op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
@@ -251,7 +251,7 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 	if (nesting++ > 0)
 		return old_zend_execute( op_array TSRMLS_CC );
 	
-	// Environment variables already imported during compile	
+	// Environment variables already imported by compile handler
 	
 	selix_debug(NULL TSRMLS_CC, "[*] Executing in proper security context %s<br>", op_array->filename );
 	
@@ -266,6 +266,10 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
 	
 	nesting = 0;
+	
+	// Upon compile error it propagates the exception to caller
+	if (CG(unclean_shutdown))
+		zend_bailout();
 }
 
 /*
@@ -283,7 +287,12 @@ void *do_zend_execute( void *data )
 #endif
 
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
-	old_zend_execute( args->op_array TSRMLS_CC );
+
+	// Catch errors
+	zend_try {
+		old_zend_execute( args->op_array TSRMLS_CC );
+	}
+	zend_end_try();
 	
 	return NULL;
 }
