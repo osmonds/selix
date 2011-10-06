@@ -184,16 +184,16 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	pthread_t compile_thread;
 	zend_compile_args args;
 	void *compiled_op_array;
-	
+
 	if (jit_initialization)
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
-	
+
 	// Forces import of environment variables
  	if (php_request_startup_for_hook(TSRMLS_C) == FAILURE)
  		php_error_docref(NULL TSRMLS_CC, E_ERROR, "php_request_startup_for_hook() error");
-	
-	selix_debug(NULL TSRMLS_CC, "[*] Compiling %s <br>", file_handle->filename );
-	
+
+	selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Compiling %s <br>", CG(in_compilation), EG(in_execution), file_handle->filename );
+
 	args.file_handle = file_handle;
 	args.type = type;
 #ifdef ZTS
@@ -201,16 +201,15 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 #endif
 	if (pthread_create( &compile_thread, NULL, do_zend_compile_file, &args ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
-
+	
 	if (pthread_join( compile_thread, &compiled_op_array ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
-	
+		
 	// Upon compile error it propagates the exception to caller
 	if (CG(unclean_shutdown))
 		zend_bailout();
-
-	return (zend_op_array *)compiled_op_array;
-}
+		
+	return (zend_op_array *)compiled_op_array;}
 
 /*
  * Executed in a thread.
@@ -244,32 +243,36 @@ void *do_zend_compile_file( void *data )
 void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	static int nesting = 0;
-	pthread_t execute_thread;
-	zend_execute_args args;
-	
-	// Nested calls are already executed in proper security context
-	if (nesting++ > 0)
-		return old_zend_execute( op_array TSRMLS_CC );
-	
-	// Environment variables already imported by compile handler
-	
-	selix_debug(NULL TSRMLS_CC, "[*] Executing in proper security context %s<br>", op_array->filename );
-	
-	args.op_array = op_array;
-#ifdef ZTS
-	args.tsrm_ls = TSRMLS_C;
-#endif
-	if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
 
-	if (pthread_join( execute_thread, NULL ))
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
+	// Nested calls are already executed in proper security context
+	if (!nesting)
+	{
+		pthread_t execute_thread;
+		zend_execute_args args;
+		nesting = 1;
+		
+		// Environment variables already imported by compile handler
+		selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Executing in proper security context %s<br>", CG(in_compilation), EG(in_execution), op_array->filename );
+
+		args.op_array = op_array;
+	#ifdef ZTS
+		args.tsrm_ls = TSRMLS_C;
+	#endif
+		if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
+			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
+
+		if (pthread_join( execute_thread, NULL ))
+			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
+			
+		// Upon exception in execution thread propagates it to the caller
+		if (CG(unclean_shutdown))
+		 	zend_bailout();
+
+		nesting = 0;
+		return;
+	}
 	
-	nesting = 0;
-	
-	// Upon compile error it propagates the exception to caller
-	if (CG(unclean_shutdown))
-		zend_bailout();
+	old_zend_execute( op_array TSRMLS_CC );
 }
 
 /*
