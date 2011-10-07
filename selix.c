@@ -180,20 +180,33 @@ PHP_MINFO_FUNCTION(selix)
  */
 zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC)
 {
-	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
 	pthread_t compile_thread;
 	zend_compile_args args;
 	void *compiled_op_array;
 
-	if (jit_initialization)
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
+	/*
+	 * Forces import of environment variables on first execution
+	 * NOTE: First script compilation is done with EG(in_execution)=0 then
+	 *       subsequent calls (include/require) with EG(in_execution)=1
+	 */
+	if (!EG(in_execution))
+	{
+		zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
 
-	// Forces import of environment variables
- 	if (php_request_startup_for_hook(TSRMLS_C) == FAILURE)
- 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "php_request_startup_for_hook() error");
+		if (jit_initialization)
+			php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
+
+	 	if (php_request_startup_for_hook(TSRMLS_C) == FAILURE)
+	 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "php_request_startup_for_hook() error");
+	}
 
 	selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Compiling %s <br>", CG(in_compilation), EG(in_execution), file_handle->filename );
 
+	/*
+	 * With ZTS running many one-time (not nested!) threads causes odd memory problems,
+	 * thus a dynamic security context transition can't be supported for compilation.
+	 */
+#ifndef ZTS
 	args.file_handle = file_handle;
 	args.type = type;
 #ifdef ZTS
@@ -208,9 +221,12 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	// Upon compile error it propagates the exception to caller
 	if (CG(unclean_shutdown))
 		zend_bailout();
-		
-	return (zend_op_array *)compiled_op_array;}
+#else
+	compiled_op_array = old_zend_compile_file( file_handle, type TSRMLS_CC );
+#endif
 
+	return (zend_op_array *)compiled_op_array;
+}
 /*
  * Executed in a thread.
  * It uses set_context in order to transition to the proper security context,
