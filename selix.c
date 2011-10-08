@@ -14,9 +14,6 @@
 ZEND_DECLARE_MODULE_GLOBALS(selix)
 static PHP_GINIT_FUNCTION(selix);
 
-void (*old_php_import_environment_variables)(zval *array_ptr TSRMLS_DC);
-void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC);
-
 void (*old_zend_execute)(zend_op_array *op_array TSRMLS_DC);
 void selix_zend_execute(zend_op_array *op_array TSRMLS_DC);
 
@@ -26,6 +23,7 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 void *do_zend_compile_file( void *data );
 void *do_zend_execute( void *data );
 int set_context( char *domain, char *range TSRMLS_DC );
+void filter_http_globals(zval *array_ptr TSRMLS_DC);
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... );
 
 /*
@@ -80,7 +78,7 @@ PHP_MINIT_FUNCTION(selix)
 {
 	int ret;
 	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
-
+	
 	REGISTER_INI_ENTRIES();
 	
 	if (SELIX_G(selinux_domain_env) && strlen(SELIX_G(selinux_domain_env)) > 0)
@@ -106,7 +104,7 @@ PHP_MINIT_FUNCTION(selix)
 	 */
 	if (jit_initialization)
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
-
+	
 	return SUCCESS;
 }
 
@@ -122,20 +120,16 @@ PHP_RINIT_FUNCTION(selix)
 	int i;
 	
 	if (is_selinux_enabled() < 1)
-		return SUCCESS;
+		return SUCCESS;	
 	
 	// Initialize parameters
 	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
 		SELIX_G(separams_values[i]) = NULL;
 	
-	/* Override php_import_environment_variables ( main/php_variables.c:824 ) */
-	old_php_import_environment_variables = php_import_environment_variables;
-	php_import_environment_variables = selix_php_import_environment_variables;
-	
 	/* Override zend_compile_file to check read permission on it for currenct SELinux domain */
 	old_zend_compile_file = zend_compile_file;
 	zend_compile_file = selix_zend_compile_file;
-	
+
 	/* Override zend_execute to execute it in a SELinux context */
 	old_zend_execute = zend_execute;
 	zend_execute = selix_zend_execute;
@@ -156,7 +150,6 @@ PHP_RSHUTDOWN_FUNCTION(selix)
 		return SUCCESS;
 	
 	// Restore handlers
-	php_import_environment_variables = old_php_import_environment_variables;
 	zend_compile_file = old_zend_compile_file;
 	zend_execute = old_zend_execute;
 	
@@ -182,42 +175,32 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 {
 	pthread_t compile_thread;
 	zend_compile_args args;
-	void *compiled_op_array;
-
+	zend_op_array *compiled_op_array;
+	zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // FPM
+	// zval *env = PG(http_globals)[TRACK_VARS_ENV];
+	// php_var_dump(&server, 1 TSRMLS_CC);
+	
 	/*
-	 * Forces import of environment variables on first execution
-	 * NOTE: First script compilation is done with EG(in_execution)=0 then
-	 *       subsequent calls (include/require) with EG(in_execution)=1
+	 * First script compilation is done with EG(in_execution)=0 
+	 * then subsequent calls (include/require) with EG(in_execution)=1
 	 */
 	if (!EG(in_execution))
-	{
-		zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
-
-		if (jit_initialization)
-			php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
-
-	 	if (php_request_startup_for_hook(TSRMLS_C) == FAILURE)
-	 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "php_request_startup_for_hook() error");
-	}
-
-	selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Compiling %s <br>", CG(in_compilation), EG(in_execution), file_handle->filename );
-
-	/*
-	 * With ZTS running many one-time (not nested!) threads causes odd memory problems,
-	 * thus a dynamic security context transition can't be supported for compilation.
-	 */
+		filter_http_globals( PG(http_globals)[TRACK_VARS_SERVER] );
+	
+	memset( &args, 0, sizeof(zend_compile_args) );
 #ifndef ZTS
 	args.file_handle = file_handle;
 	args.type = type;
 #ifdef ZTS
 	args.tsrm_ls = TSRMLS_C;
 #endif
+	
 	if (pthread_create( &compile_thread, NULL, do_zend_compile_file, &args ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
 	
-	if (pthread_join( compile_thread, &compiled_op_array ))
+	if (pthread_join( compile_thread, (void *)&compiled_op_array ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
-		
+	
 	// Upon compile error it propagates the exception to caller
 	if (CG(unclean_shutdown))
 		zend_bailout();
@@ -225,8 +208,9 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	compiled_op_array = old_zend_compile_file( file_handle, type TSRMLS_CC );
 #endif
 
-	return (zend_op_array *)compiled_op_array;
+	return compiled_op_array;
 }
+
 /*
  * Executed in a thread.
  * It uses set_context in order to transition to the proper security context,
@@ -258,37 +242,34 @@ void *do_zend_compile_file( void *data )
  */
 void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 {
-	static int nesting = 0;
-
 	// Nested calls are already executed in proper security context
-	if (!nesting)
+	if (!EG(in_execution))
 	{
 		pthread_t execute_thread;
 		zend_execute_args args;
-		nesting = 1;
-		
-		// Environment variables already imported by compile handler
-		selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Executing in proper security context %s<br>", CG(in_compilation), EG(in_execution), op_array->filename );
-
+	
+		// selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Executing in new security context %s<br>", CG(in_compilation), EG(in_execution), op_array->filename );
+	
+		memset( &args, 0, sizeof(zend_execute_args) );
 		args.op_array = op_array;
-	#ifdef ZTS
+#ifdef ZTS
 		args.tsrm_ls = TSRMLS_C;
-	#endif
+#endif
+		
 		if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
 			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
-
+		
 		if (pthread_join( execute_thread, NULL ))
 			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
-			
+
 		// Upon exception in execution thread propagates it to the caller
 		if (CG(unclean_shutdown))
 		 	zend_bailout();
-
-		nesting = 0;
+		
 		return;
 	}
-	
-	old_zend_execute( op_array TSRMLS_CC );
+	else
+		return old_zend_execute( op_array );
 }
 
 /*
@@ -299,17 +280,17 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 void *do_zend_execute( void *data )
 {
 	zend_execute_args *args = (zend_execute_args *)data;
-	
+
 #ifdef ZTS
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
 
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
-
+	
 	// Catch errors
 	zend_try {
-		old_zend_execute( args->op_array TSRMLS_CC );
+		old_zend_execute( args->op_array );
 	}
 	zend_end_try();
 	
@@ -319,6 +300,7 @@ void *do_zend_execute( void *data )
 /*
  * It sets the security context of the calling thread to the new one received from
  * environment variables.
+ * Returns 0 on success, 1 if no context changes are made (current == new).
  */
 int set_context( char *domain, char *range TSRMLS_DC )
 {
@@ -336,7 +318,6 @@ int set_context( char *domain, char *range TSRMLS_DC )
 		freecon( current_ctx );
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "context_new() failed");
 	}
-	selix_debug(NULL TSRMLS_CC, "[SC] Current context: %s<br>", current_ctx );
 	
 	// Sets values for the new context
 	if (domain && strlen(domain) > 0 && range && strlen(range) > 0)
@@ -374,10 +355,10 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	
 	if (!strcmp( current_ctx, new_ctx ))
 	{
-		selix_debug(NULL TSRMLS_CC, "[SC] No context chages made<br>", new_ctx );
+		// selix_debug(NULL TSRMLS_CC, "[SC] No context chages made<br>", new_ctx );
 		context_free( context );
 		freecon( current_ctx );
-		return 0;
+		return 1;
 	}
 
 	// Set new context
@@ -387,7 +368,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 		context_free( context );
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "setcon() failed");
 	}	
-	selix_debug(NULL TSRMLS_CC, "[SC] New context: %s<br>", new_ctx );
+	selix_debug(NULL TSRMLS_CC, "[SC] %s <= %s<br>", new_ctx, current_ctx );
 	
 	// Free previously allocated context_t and so the new_ctx pointer isn't valid anymore
 	context_free( context );
@@ -398,18 +379,15 @@ int set_context( char *domain, char *range TSRMLS_DC )
 /*
  * It gets SELinux related values from environment variables.
  */
-void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
+void filter_http_globals(zval *array_ptr TSRMLS_DC)
 {
 	zval **data;
 	HashTable *arr_hash;
 	int i;
 	char *str;
 	
-	if (!array_ptr)
+	if (!array_ptr || Z_TYPE_P(array_ptr) != IS_ARRAY)
 		return;
-	
-	/* call php's original import as a catch-all */
-	old_php_import_environment_variables( array_ptr TSRMLS_CC );
 	
 	arr_hash = Z_ARRVAL_P(array_ptr);
 	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
@@ -431,16 +409,16 @@ void selix_php_import_environment_variables(zval *array_ptr TSRMLS_DC)
 			char *key;
 			int key_len;
 			long index;
-		
-			if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING)
-			{			
+			
+			if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING 
+					&& Z_TYPE_PP(data) == IS_STRING)
+			{				
 				if (!strcmp( key, SELIX_G(separams_names[i]) ))
 				{
-					if (Z_TYPE_PP(data) == IS_STRING)
 					SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
-			
+		
 					// selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
-			
+		
 					// Hide <selinux_param>
 					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
 					continue;
