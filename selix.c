@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <pthread.h>
 #include <selinux/selinux.h>
 #include <selinux/context.h>
@@ -225,7 +226,6 @@ void *do_zend_compile_file( void *data )
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
-
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );	
 
 	// Catch compile errors
@@ -246,30 +246,44 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 	if (!EG(in_execution))
 	{
 		pthread_t execute_thread;
+		sigset_t sigmask, old_sigmask;
 		zend_execute_args args;
 	
 		// selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Executing in new security context %s<br>", CG(in_compilation), EG(in_execution), op_array->filename );
 	
 		memset( &args, 0, sizeof(zend_execute_args) );
 		args.op_array = op_array;
+		args.sigmask = &old_sigmask;
 #ifdef ZTS
 		args.tsrm_ls = TSRMLS_C;
 #endif
+
+		/*
+		 * Signals must be trasparently delivered to execution thread,
+		 * thus parent thread must mask them all and child thread use main's mask.
+		 */
+		sigfillset( &sigmask );
+		pthread_sigmask( SIG_SETMASK, &sigmask, &old_sigmask );
 		
 		if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
 			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
-		
+
 		if (pthread_join( execute_thread, NULL ))
 			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
 
+		// Restore signal mask
+		pthread_sigmask( SIG_SETMASK, &old_sigmask, NULL );
+
 		// Upon exception in execution thread propagates it to the caller
 		if (CG(unclean_shutdown))
-		 	zend_bailout();
+			zend_bailout();
 		
 		return;
 	}
 	else
+	{
 		return old_zend_execute( op_array );
+	}
 }
 
 /*
@@ -281,11 +295,13 @@ void *do_zend_execute( void *data )
 {
 	zend_execute_args *args = (zend_execute_args *)data;
 
+	// Set parent's signal mask
+	pthread_sigmask( SIG_SETMASK, args->sigmask, NULL );
+
 #ifdef ZTS
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
-
 	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
 	
 	// Catch errors

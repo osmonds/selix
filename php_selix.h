@@ -30,6 +30,7 @@ typedef struct _zend_compile_args {
 
 typedef struct _zend_execute_args {
 	zend_op_array *op_array;
+	sigset_t *sigmask;
 #ifdef ZTS
 	TSRMLS_D;
 #endif
