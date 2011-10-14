@@ -257,10 +257,9 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 #ifdef ZTS
 		args.tsrm_ls = TSRMLS_C;
 #endif
-
 		/*
 		 * Signals must be trasparently delivered to execution thread,
-		 * thus parent thread must mask them all and child thread use main's mask.
+		 * thus parent thread must mask them all and child thread use parent's mask.
 		 */
 		sigfillset( &sigmask );
 		pthread_sigmask( SIG_SETMASK, &sigmask, &old_sigmask );
@@ -281,9 +280,7 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 		return;
 	}
 	else
-	{
 		return old_zend_execute( op_array );
-	}
 }
 
 /*
@@ -384,7 +381,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 		context_free( context );
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "setcon() failed");
 	}	
-	selix_debug(NULL TSRMLS_CC, "[SC] %s <= %s<br>", new_ctx, current_ctx );
+	selix_debug(NULL TSRMLS_CC, "[SC] %s (from %s)<br>", new_ctx, current_ctx );
 	
 	// Free previously allocated context_t and so the new_ctx pointer isn't valid anymore
 	context_free( context );
@@ -398,56 +395,35 @@ int set_context( char *domain, char *range TSRMLS_DC )
 void filter_http_globals(zval *array_ptr TSRMLS_DC)
 {
 	zval **data;
-	HashTable *arr_hash;
+	HashTable *ht;
 	int i;
 	char *str;
 	
 	if (!array_ptr || Z_TYPE_P(array_ptr) != IS_ARRAY)
 		return;
 	
-	arr_hash = Z_ARRVAL_P(array_ptr);
+	ht = Z_ARRVAL_P(array_ptr);
 	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
 	{
-		/*
-		 * Apache mod_fastcgi adds a parameter for every SetEnv <name> <value>
-		 * in the form of "REDIRECT_<name>". These need to be hidden.
-		 */
+		char *env_name = SELIX_G(separams_names[i]);
+		int env_name_length = strlen( env_name );
 		int redirect_len = strlen("REDIRECT_") + strlen( SELIX_G(separams_names[i]) ) + 1;
 		char *redirect_param = (char *) emalloc( redirect_len );
 
 		memset( redirect_param, 0, redirect_len );
 		strcat( redirect_param, "REDIRECT_" );
 		strcat( redirect_param, SELIX_G(separams_names[i]) );
-
-		zend_hash_internal_pointer_reset_ex( arr_hash, NULL );
-		while (zend_hash_get_current_data_ex(arr_hash, (void**) &data, NULL) == SUCCESS)
+		
+		if (zend_hash_find( ht, env_name, env_name_length + 1, (void **)&data ) == SUCCESS)
 		{
-			char *key;
-			int key_len;
-			long index;
+			if (Z_TYPE_PP(data) == IS_STRING)
+				SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
 			
-			if (zend_hash_get_current_key_ex(arr_hash, &key, &key_len, &index, 0, NULL) == HASH_KEY_IS_STRING 
-					&& Z_TYPE_PP(data) == IS_STRING)
-			{				
-				if (!strcmp( key, SELIX_G(separams_names[i]) ))
-				{
-					SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
-		
-					// selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
-		
-					// Hide <selinux_param>
-					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
-					continue;
-				}
-				if (!strcmp( key, redirect_param ))
-				{
-					// Hide REDIRECT_<selinux_param> entries
-					zend_hash_del( arr_hash, key, strlen(key) + 1 ); // deleted key becomes the next one
-					continue;
-				}
-			}
+			// selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
 			
-			zend_hash_move_forward_ex( arr_hash, NULL );
+			// Do not expose SELinux security context to scripts
+			zend_hash_del( ht, env_name, env_name_length + 1 );
+			zend_hash_del( ht, redirect_param, redirect_len );
 		}
 		
 		efree( redirect_param );
