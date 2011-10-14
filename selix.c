@@ -169,10 +169,12 @@ PHP_MINFO_FUNCTION(selix)
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
 	php_info_print_table_row(2, "Compiled on", __DATE__ " at " __TIME__);
-	php_info_print_table_row(2, "selinux_domain_env", SELIX_G(domain_env));
-	php_info_print_table_row(2, "selinux_range_env", SELIX_G(range_env));
-	php_info_print_table_row(2, "force_context_change", SELIX_G(force_context_change)? "On":"Off");
-	php_info_print_table_row(2, "verbose", SELIX_G(verbose)? "On":"Off");
+	php_info_print_table_row(2, "selix.domain_env", SELIX_G(domain_env));
+	php_info_print_table_row(2, "selix.range_env", SELIX_G(range_env));
+	php_info_print_table_row(2, "selix.compile_domain_env", SELIX_G(compile_domain_env));
+	php_info_print_table_row(2, "selix.compile_range_env", SELIX_G(compile_range_env));
+	php_info_print_table_row(2, "selix.force_context_change", SELIX_G(force_context_change)? "On":"Off");
+	php_info_print_table_row(2, "selix.verbose", SELIX_G(verbose)? "On":"Off");
 	php_info_print_table_end();
 }
 
