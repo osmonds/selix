@@ -1,9 +1,11 @@
 #ifndef PHP_SELIX_H
 #define PHP_SELIX_H
 
-#define SELINUX_PARAMS_COUNT		2
-#define PARAM_DOMAIN_IDX	0
-#define PARAM_RANGE_IDX		1
+#define SCP_COUNT			4
+#define SCP_DOMAIN_IDX		0
+#define SCP_RANGE_IDX		1
+#define SCP_CDOMAIN_IDX		2
+#define SCP_CRANGE_IDX		3
 
 extern zend_module_entry selix_module_entry;
 #define phpext_selix_ptr &selix_module_entry
@@ -43,12 +45,14 @@ PHP_RSHUTDOWN_FUNCTION(selix);
 PHP_MINFO_FUNCTION(selix);
 
 ZEND_BEGIN_MODULE_GLOBALS(selix)
-	char *separams_names[SELINUX_PARAMS_COUNT];
-	char *separams_values[SELINUX_PARAMS_COUNT];
+	char *separams_names[SCP_COUNT];
+	char *separams_values[SCP_COUNT];
 	zend_bool force_context_change;
 	zend_bool verbose;
-	char *selinux_domain_env;
-	char *selinux_range_env;
+	char *domain_env;
+	char *range_env;
+	char *compile_domain_env;
+	char *compile_range_env;
 ZEND_END_MODULE_GLOBALS(selix)
 
 #ifdef ZTS

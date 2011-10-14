@@ -63,8 +63,11 @@ ZEND_GET_MODULE(selix)
 PHP_INI_BEGIN()
 STD_PHP_INI_BOOLEAN("selix.force_context_change", "0", PHP_INI_SYSTEM, OnUpdateBool, force_context_change, zend_selix_globals, selix_globals)
 STD_PHP_INI_BOOLEAN("selix.verbose", "0", PHP_INI_ALL, OnUpdateBool, verbose, zend_selix_globals, selix_globals)
-STD_PHP_INI_ENTRY("selix.selinux_domain_env", "SELINUX_DOMAIN", PHP_INI_SYSTEM, OnUpdateString, selinux_domain_env, zend_selix_globals, selix_globals)
-STD_PHP_INI_ENTRY("selix.selinux_range_env", "SELINUX_RANGE", PHP_INI_SYSTEM, OnUpdateString, selinux_range_env, zend_selix_globals, selix_globals)
+STD_PHP_INI_ENTRY("selix.domain_env", "SELINUX_DOMAIN", PHP_INI_SYSTEM, OnUpdateString, domain_env, zend_selix_globals, selix_globals)
+STD_PHP_INI_ENTRY("selix.range_env", "SELINUX_RANGE", PHP_INI_SYSTEM, OnUpdateString, range_env, zend_selix_globals, selix_globals)
+STD_PHP_INI_ENTRY("selix.compile_domain_env", "SELINUX_COMPILE_DOMAIN", PHP_INI_SYSTEM, OnUpdateString, compile_domain_env, zend_selix_globals, selix_globals)
+STD_PHP_INI_ENTRY("selix.compile_range_env", "SELINUX_COMPILE_RANGE", PHP_INI_SYSTEM, OnUpdateString, compile_range_env, zend_selix_globals, selix_globals)
+
 PHP_INI_END()
 
 /*
@@ -82,10 +85,14 @@ PHP_MINIT_FUNCTION(selix)
 	
 	REGISTER_INI_ENTRIES();
 	
-	if (SELIX_G(selinux_domain_env) && strlen(SELIX_G(selinux_domain_env)) > 0)
-		SELIX_G(separams_names[PARAM_DOMAIN_IDX]) = SELIX_G(selinux_domain_env);
-	if (SELIX_G(selinux_range_env) && strlen(SELIX_G(selinux_range_env)) > 0)
-		SELIX_G(separams_names[PARAM_RANGE_IDX]) = SELIX_G(selinux_range_env);
+	if (SELIX_G(domain_env) && strlen(SELIX_G(domain_env)) > 0)
+		SELIX_G(separams_names[SCP_DOMAIN_IDX]) = SELIX_G(domain_env);
+	if (SELIX_G(range_env) && strlen(SELIX_G(range_env)) > 0)
+		SELIX_G(separams_names[SCP_RANGE_IDX]) = SELIX_G(range_env);
+	if (SELIX_G(compile_domain_env) && strlen(SELIX_G(compile_domain_env)) > 0)
+		SELIX_G(separams_names[SCP_CDOMAIN_IDX]) = SELIX_G(compile_domain_env);
+	if (SELIX_G(compile_range_env) && strlen(SELIX_G(compile_range_env)) > 0)
+		SELIX_G(separams_names[SCP_CRANGE_IDX]) = SELIX_G(compile_range_env);
 
 	ret = is_selinux_enabled();
 	if (!ret)
@@ -124,7 +131,7 @@ PHP_RINIT_FUNCTION(selix)
 		return SUCCESS;	
 	
 	// Initialize parameters
-	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
+	for (i=0; i < SCP_COUNT; i++)
 		SELIX_G(separams_values[i]) = NULL;
 	
 	/* Override zend_compile_file to check read permission on it for currenct SELinux domain */
@@ -143,7 +150,7 @@ PHP_RSHUTDOWN_FUNCTION(selix)
 	int i;
 	
 	// Dealloc parameters
-	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
+	for (i=0; i < SCP_COUNT; i++)
 		if (SELIX_G(separams_values[i]))
 			efree( SELIX_G(separams_values[i]) );
 	
@@ -162,8 +169,8 @@ PHP_MINFO_FUNCTION(selix)
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
 	php_info_print_table_row(2, "Compiled on", __DATE__ " at " __TIME__);
-	php_info_print_table_row(2, "selinux_domain_env", SELIX_G(selinux_domain_env));
-	php_info_print_table_row(2, "selinux_range_env", SELIX_G(selinux_range_env));
+	php_info_print_table_row(2, "selinux_domain_env", SELIX_G(domain_env));
+	php_info_print_table_row(2, "selinux_range_env", SELIX_G(range_env));
 	php_info_print_table_row(2, "force_context_change", SELIX_G(force_context_change)? "On":"Off");
 	php_info_print_table_row(2, "verbose", SELIX_G(verbose)? "On":"Off");
 	php_info_print_table_end();
@@ -177,8 +184,7 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	pthread_t compile_thread;
 	zend_compile_args args;
 	zend_op_array *compiled_op_array;
-	zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // FPM
-	// zval *env = PG(http_globals)[TRACK_VARS_ENV];
+	zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
 	// php_var_dump(&server, 1 TSRMLS_CC);
 	
 	/*
@@ -202,7 +208,7 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	if (pthread_join( compile_thread, (void *)&compiled_op_array ))
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
 	
-	// Upon compile error it propagates the exception to caller
+	// On compile error it propagates the exception to caller
 	if (CG(unclean_shutdown))
 		zend_bailout();
 #else
@@ -226,7 +232,7 @@ void *do_zend_compile_file( void *data )
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
-	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );	
+	set_context( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC );	
 
 	// Catch compile errors
 	zend_try {
@@ -273,7 +279,7 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 		// Restore signal mask
 		pthread_sigmask( SIG_SETMASK, &old_sigmask, NULL );
 
-		// Upon exception in execution thread propagates it to the caller
+		// On exception in execution thread propagates it to the caller
 		if (CG(unclean_shutdown))
 			zend_bailout();
 		
@@ -299,7 +305,7 @@ void *do_zend_execute( void *data )
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
-	set_context( SELIX_G(separams_values[PARAM_DOMAIN_IDX]), SELIX_G(separams_values[PARAM_RANGE_IDX]) TSRMLS_CC );
+	set_context( SELIX_G(separams_values[SCP_DOMAIN_IDX]), SELIX_G(separams_values[SCP_RANGE_IDX]) TSRMLS_CC );
 	
 	// Catch errors
 	zend_try {
@@ -403,7 +409,7 @@ void filter_http_globals(zval *array_ptr TSRMLS_DC)
 		return;
 	
 	ht = Z_ARRVAL_P(array_ptr);
-	for (i=0; i < SELINUX_PARAMS_COUNT; i++)
+	for (i=0; i < SCP_COUNT; i++)
 	{
 		char *env_name = SELIX_G(separams_names[i]);
 		int env_name_length = strlen( env_name );
