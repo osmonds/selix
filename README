@@ -1,1 +1,3 @@
 SELinux eXtension for PHP
+
+For an example DTE policy see: http://github.com/ettoredn/sephp-sandbox/tree/master/policy
