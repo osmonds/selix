@@ -81,7 +81,7 @@ static PHP_GINIT_FUNCTION(selix)
 PHP_MINIT_FUNCTION(selix)
 {
 	int ret;
-	zend_bool jit_initialization = (PG(auto_globals_jit) && !PG(register_globals) && !PG(register_long_arrays));
+	zend_bool jit_initialization = PG(auto_globals_jit);
 	
 	REGISTER_INI_ENTRIES();
 	
@@ -194,6 +194,11 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	 * then subsequent calls (include/require) with EG(in_execution)=1
 	 */
 	if (!EG(in_execution))
+		/* 
+		 * TODO
+		 * With cli environment variables are replicated in $_SERVER array,
+		 * this means $_ENV array must be filtered to hide SELinux parameters.
+		 */
 		filter_http_globals( PG(http_globals)[TRACK_VARS_SERVER] );
 	
 	memset( &args, 0, sizeof(zend_compile_args) );
