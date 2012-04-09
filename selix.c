@@ -93,16 +93,11 @@ PHP_MINIT_FUNCTION(selix)
 	if (SELIX_G(compile_range_env) && strlen(SELIX_G(compile_range_env)) > 0)
 		SELIX_G(separams_names[SCP_CRANGE_IDX]) = SELIX_G(compile_range_env);
 
-	ret = is_selinux_enabled();
-	if (!ret)
+	if (zend_selix_initialised == 0)
 	{
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "SELinux is not enabled on the system! This causes PHP-SELinux to be off");
-		return SUCCESS;
+		zend_error(E_ERROR, "selix extension MUST be loaded as a Zend extension!");
+		return FAILURE;
 	}
-	else if (ret < 0)
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "is_selinux_enabled() failed. Check your SELinux installation" );		
-	
-	// SELinux enabled
 	
 	/* 
 	 * auto_globals_jit needs to be off in order to be able to get environment variables
@@ -110,11 +105,20 @@ PHP_MINIT_FUNCTION(selix)
 	 * http://www.php.net/manual/en/ini.core.php#ini.auto-globals-jit
 	 */
 	if (jit_initialization)
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
-		
-	if (zend_selix_initialised == 0) {
-		zend_error(E_WARNING, "selix MUST be loaded as a Zend extension");
+	{
+		zend_error(E_ERROR, "Can't enable SELinux support with auto_globals_jit enabled!");
+		return FAILURE;
 	}
+	
+	ret = is_selinux_enabled();
+	if (!ret)
+		zend_error(E_WARNING, "SELinux is not enabled on the system. This causes selix extension to be off");
+	else if (ret < 0)
+	{
+		zend_error(E_ERROR, "is_selinux_enabled() failed. Check your SELinux installation or disable selix extension" );
+		return FAILURE;
+	}
+	// SELinux enabled
 	
 	return SUCCESS;
 }
@@ -129,9 +133,6 @@ PHP_MSHUTDOWN_FUNCTION(selix)
 PHP_RINIT_FUNCTION(selix)
 {
 	int i;
-	
-	if (is_selinux_enabled() < 1)
-		return SUCCESS;	
 	
 	// Initialize parameters
 	for (i=0; i < SCP_COUNT; i++)
@@ -156,10 +157,7 @@ PHP_RSHUTDOWN_FUNCTION(selix)
 	for (i=0; i < SCP_COUNT; i++)
 		if (SELIX_G(separams_values[i]))
 			efree( SELIX_G(separams_values[i]) );
-	
-	if (is_selinux_enabled() < 1)
-		return SUCCESS;
-	
+
 	// Restore handlers
 	zend_compile_file = old_zend_compile_file;
 	zend_execute = old_zend_execute;
@@ -193,6 +191,10 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
 	// php_var_dump(&server, 1 TSRMLS_CC);
 	
+	// Call the original handler if SELinux is disabled
+	if (is_selinux_enabled() < 1)
+		return old_zend_compile_file( file_handle, type TSRMLS_CC );
+	
 	/*
 	 * First script compilation is done with EG(in_execution)=0 
 	 * then subsequent calls (include/require) with EG(in_execution)=1
@@ -214,17 +216,17 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 #endif
 	
 	if (pthread_create( &compile_thread, NULL, do_zend_compile_file, &args ))
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
+		zend_error(E_CORE_ERROR, "pthread_create() error");
 	
 	if (pthread_join( compile_thread, (void *)&compiled_op_array ))
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
+		zend_error(E_CORE_ERROR, "pthread_join() error");
 	
 	// On compile error it propagates the exception to caller
 	if (CG(unclean_shutdown))
 		zend_bailout();
-#else
+#else /* ifndef ZTS */
 	compiled_op_array = old_zend_compile_file( file_handle, type TSRMLS_CC );
-#endif
+#endif /* ifndef ZTS */
 
 	return compiled_op_array;
 }
@@ -260,7 +262,7 @@ void *do_zend_compile_file( void *data )
 void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	// Nested calls are already executed in proper security context
-	if (!EG(in_execution))
+	if (!EG(in_execution) && is_selinux_enabled() == 1)
 	{
 		pthread_t execute_thread;
 		sigset_t sigmask, old_sigmask;
@@ -282,10 +284,10 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 		pthread_sigmask( SIG_SETMASK, &sigmask, &old_sigmask );
 		
 		if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
-			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_create() error");
+			zend_error(E_CORE_ERROR, "pthread_create() error");
 
 		if (pthread_join( execute_thread, NULL ))
-			php_error_docref(NULL TSRMLS_CC, E_ERROR, "pthread_join() error");
+			zend_error(E_CORE_ERROR, "pthread_join() error");
 
 		// Restore signal mask
 		pthread_sigmask( SIG_SETMASK, &old_sigmask, NULL );
@@ -339,14 +341,18 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	
 	// Get current context
 	if (getcon( &current_ctx ) < 0)
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "getcon() failed");
+	{
+		zend_error(E_ERROR, "getcon() failed");
+		return 1;
+	}
 	
 	// Allocates a new context_t (i.e. malloc)
 	context = context_new( current_ctx );
 	if (!context)
 	{
 		freecon( current_ctx );
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "context_new() failed");
+		zend_error(E_ERROR, "context_new() failed");
+		return 1;
 	}
 	
 	// Sets values for the new context
@@ -371,7 +377,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		// Execute in default security context if neither domain nor range is defined
 		if (SELIX_G(force_context_change))
-			php_error_docref(NULL TSRMLS_CC, E_ERROR, "Executing scripts in default security context is disabled. See selix.force_context_change");
+			zend_error(E_CORE_ERROR, "Executing scripts in default security context is disabled. See selix.force_context_change");
 	}	
 	
 	// Gets a pointer to a string representing the context_t
@@ -380,7 +386,8 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		freecon( current_ctx );
 		context_free( context );
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "context_str() failed");
+		zend_error(E_ERROR, "context_str() failed");
+		return 1;
 	}
 	
 	if (!strcmp( current_ctx, new_ctx ))
@@ -396,7 +403,8 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		freecon( current_ctx );
 		context_free( context );
-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "setcon() failed");
+		zend_errorf(E_ERROR, "setcon() failed");
+		return 1;
 	}	
 	selix_debug(NULL TSRMLS_CC, "[SC] %s (from %s)<br>", new_ctx, current_ctx );
 	
