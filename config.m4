@@ -12,6 +12,6 @@ if test "$PHP_SELIX" != "no"; then
     -lselinux
   ])
 
+  PHP_NEW_EXTENSION(selix, selix.c, $ext_shared,,,,yes)
   PHP_SUBST(SELIX_SHARED_LIBADD)
-  PHP_NEW_EXTENSION(selix, selix.c, $ext_shared)
 fi

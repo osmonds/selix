@@ -1,6 +1,12 @@
 #ifndef PHP_SELIX_H
 #define PHP_SELIX_H
 
+#define SELIX_NAME			"selix"
+#define SELIX_VERSION 		"0.1"
+#define SELIX_AUTHOR 		"Ettore Del Negro"
+#define SELIX_URL 			"http://github.com/ettoredn/selix"
+#define SELIX_COPYRIGHT  	"Copyright (c) 2011-2012"
+
 #define SCP_COUNT			4
 #define SCP_DOMAIN_IDX		0
 #define SCP_RANGE_IDX		1

@@ -10,6 +10,7 @@
 #include "php_variables.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
+#include "zend_extensions.h"
 #include "php_selix.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(selix)
@@ -27,6 +28,8 @@ int set_context( char *domain, char *range TSRMLS_DC );
 void filter_http_globals(zval *array_ptr TSRMLS_DC);
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... );
 
+int zend_selix_initialised = 0;
+
 /*
  * Every user visible function must have an entry in selix_functions[].
  */
@@ -35,9 +38,7 @@ const zend_function_entry selix_functions[] = {
 };
 
 zend_module_entry selix_module_entry = {
-#if ZEND_MODULE_API_NO >= 20010901
 	STANDARD_MODULE_HEADER,
-#endif
 	"selix",
 	selix_functions,
 	PHP_MINIT(selix),
@@ -45,9 +46,7 @@ zend_module_entry selix_module_entry = {
 	PHP_RINIT(selix),
 	PHP_RSHUTDOWN(selix),
 	PHP_MINFO(selix),
-#if ZEND_MODULE_API_NO >= 20010901
 	"0.1",
-#endif
 	PHP_MODULE_GLOBALS(selix),
 	PHP_GINIT(selix),
 	NULL,
@@ -112,6 +111,10 @@ PHP_MINIT_FUNCTION(selix)
 	 */
 	if (jit_initialization)
 		php_error_docref(NULL TSRMLS_CC, E_ERROR, "Can't enable PHP-SELinux support with auto_globals_jit enabled!");
+		
+	if (zend_selix_initialised == 0) {
+		zend_error(E_WARNING, "selix MUST be loaded as a Zend extension");
+	}
 	
 	return SUCCESS;
 }
@@ -168,6 +171,7 @@ PHP_MINFO_FUNCTION(selix)
 {
 	php_info_print_table_start();
 	php_info_print_table_header(2, "SELinux support", "enabled");
+	php_info_print_table_row(2, "Version", SELIX_VERSION );
 	php_info_print_table_row(2, "Compiled on", __DATE__ " at " __TIME__);
 	php_info_print_table_row(2, "selix.domain_env", SELIX_G(domain_env));
 	php_info_print_table_row(2, "selix.range_env", SELIX_G(range_env));
@@ -457,3 +461,40 @@ void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
 	free(str);
 	va_end(args);
 }
+
+ZEND_DLEXPORT int selix_zend_startup(zend_extension *extension)
+{
+	zend_selix_initialised = 1;
+	return zend_startup_module(&selix_module_entry);
+}
+
+ZEND_DLEXPORT void selix_zend_shutdown(zend_extension *extension)
+{
+	// Nothing
+}
+
+/* This is a Zend extension */
+#ifndef ZEND_EXT_API
+#define ZEND_EXT_API    ZEND_DLEXPORT
+#endif
+ZEND_EXTENSION();
+
+ZEND_DLEXPORT zend_extension zend_extension_entry = {
+	SELIX_NAME,
+	SELIX_VERSION,
+	SELIX_AUTHOR,
+	SELIX_URL,
+	SELIX_COPYRIGHT,
+	selix_zend_startup, 	// startup_func_t
+	selix_zend_shutdown,	// shutdown_func_t
+	NULL,					// activate_func_t
+	NULL,					// deactivate_func_t
+	NULL,					// message_handler_func_t
+	NULL,					// op_array_handler_func_t
+	NULL,					// statement_handler_func_t
+	NULL,					// fcall_begin_handler_func_t
+	NULL,					// fcall_end_handler_func_t
+	NULL,					// op_array_ctor_func_t
+	NULL,					// op_array_dtor_func_t
+	STANDARD_ZEND_EXTENSION_PROPERTIES
+};
