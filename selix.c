@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <selinux/selinux.h>
 #include <selinux/context.h>
+#include <assert.h>
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -26,6 +27,7 @@ void *do_zend_compile_file( void *data );
 void *do_zend_execute( void *data );
 int set_context( char *domain, char *range TSRMLS_DC );
 void filter_http_globals(zval *array_ptr TSRMLS_DC);
+int check_read_permission( zend_file_handle *handle );
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... );
 
 int zend_selix_initialised = 0;
@@ -183,11 +185,13 @@ PHP_MINFO_FUNCTION(selix)
 /*
  * zend_compile_file() handler
  */
-zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC)
+zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type TSRMLS_DC )
 {
 	pthread_t compile_thread;
 	zend_compile_args args;
+	zend_compile_retval *retval;
 	zend_op_array *compiled_op_array;
+	int bailout;
 	zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
 	// php_var_dump(&server, 1 TSRMLS_CC);
 	
@@ -218,12 +222,18 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 	if (pthread_create( &compile_thread, NULL, do_zend_compile_file, &args ))
 		zend_error(E_CORE_ERROR, "pthread_create() error");
 	
-	if (pthread_join( compile_thread, (void *)&compiled_op_array ))
+	if (pthread_join( compile_thread, (void *)&retval ))
 		zend_error(E_CORE_ERROR, "pthread_join() error");
 	
+	assert(retval != NULL);
+	compiled_op_array = retval->op_array;
+	bailout = retval->bailout;
+	efree( retval );
+	
 	// On compile error it propagates the exception to caller
-	if (CG(unclean_shutdown))
+	if (bailout)
 		zend_bailout();
+	
 #else /* ifndef ZTS */
 	compiled_op_array = old_zend_compile_file( file_handle, type TSRMLS_CC );
 #endif /* ifndef ZTS */
@@ -239,7 +249,9 @@ zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type T
 void *do_zend_compile_file( void *data )
 {
 	zend_compile_args *args = (zend_compile_args *)data;
-	zend_op_array *compiled_op_array = NULL;
+	zend_compile_retval *retval = emalloc( sizeof(zend_compile_retval) );
+	
+	memset( retval, 0, sizeof(zend_compile_retval) );
 	
 #ifdef ZTS
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
@@ -247,20 +259,42 @@ void *do_zend_compile_file( void *data )
 #endif
 	set_context( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC );	
 
-	// Catch compile errors
-	zend_try {
-		compiled_op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
+	/*
+	 * Caller may have already opened the file in previous context.
+	 * Permissions must be re-checked.
+	 */
+	if (check_read_permission( args->file_handle ) == FAILURE)
+	{
+		if (args->type == ZEND_REQUIRE)
+		{
+			zend_message_dispatcher(ZMSG_FAILED_REQUIRE_FOPEN, args->file_handle->filename TSRMLS_CC);
+			retval->bailout = 1;
+		}
+		else
+			zend_message_dispatcher(ZMSG_FAILED_INCLUDE_FOPEN, args->file_handle->filename TSRMLS_CC);
+					
+		retval->op_array = NULL;
 	}
-	zend_end_try();
-	
-	return compiled_op_array;
+	else {
+		// Catch compile errors
+		zend_try {
+			retval->op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
+		} zend_catch {
+			retval->bailout = 1;
+		} zend_end_try();
+	}
+		
+	return retval;
 }
 
 /*
  * zend_execute() handler
  */
-void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
+void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 {
+	zend_execute_retval *retval;
+	int bailout;
+	
 	// Nested calls are already executed in proper security context
 	if (!EG(in_execution) && is_selinux_enabled() == 1)
 	{
@@ -286,14 +320,18 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 		if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
 			zend_error(E_CORE_ERROR, "pthread_create() error");
 
-		if (pthread_join( execute_thread, NULL ))
+		if (pthread_join( execute_thread, (void *)&retval ))
 			zend_error(E_CORE_ERROR, "pthread_join() error");
-
+		
 		// Restore signal mask
 		pthread_sigmask( SIG_SETMASK, &old_sigmask, NULL );
 
-		// On exception in execution thread propagates it to the caller
-		if (CG(unclean_shutdown))
+		assert(retval != NULL);
+		bailout = retval->bailout;
+		efree( retval );
+
+		// On execution error it propagates the exception to caller
+		if (bailout)
 			zend_bailout();
 		
 		return;
@@ -310,7 +348,10 @@ void selix_zend_execute(zend_op_array *op_array TSRMLS_DC)
 void *do_zend_execute( void *data )
 {
 	zend_execute_args *args = (zend_execute_args *)data;
+	zend_compile_retval *retval = emalloc( sizeof(zend_compile_retval) );
 
+	memset( retval, 0, sizeof(zend_compile_retval) );
+	
 	// Set parent's signal mask
 	pthread_sigmask( SIG_SETMASK, args->sigmask, NULL );
 
@@ -323,10 +364,11 @@ void *do_zend_execute( void *data )
 	// Catch errors
 	zend_try {
 		old_zend_execute( args->op_array );
-	}
-	zend_end_try();
+	} zend_catch {
+		retval->bailout = 1;
+	} zend_end_try();
 	
-	return NULL;
+	return retval;
 }
 
 /*
@@ -362,7 +404,6 @@ int set_context( char *domain, char *range TSRMLS_DC )
 		context_type_set( context, domain );
 		context_range_set( context, range );	
 	}
-
 	else if (domain && strlen(domain) > 0 && (!range || strlen(range) < 1))
 	{
 		// Domain only
@@ -417,7 +458,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 /*
  * It gets SELinux related values from environment variables.
  */
-void filter_http_globals(zval *array_ptr TSRMLS_DC)
+void filter_http_globals( zval *array_ptr TSRMLS_DC )
 {
 	zval **data;
 	HashTable *ht;
@@ -453,6 +494,30 @@ void filter_http_globals(zval *array_ptr TSRMLS_DC)
 		
 		efree( redirect_param );
 	}
+}
+
+/*
+ * It calls php's wrapper to force a open/read on the file.
+ * This is used to verify whether the current context has the permissions to read the file.
+ */
+int check_read_permission( zend_file_handle *handle )
+{
+	int retval = 0;
+	char *opened_path;
+	php_stream *stream = php_stream_open_wrapper((char *)handle->filename, "rb", 
+			USE_PATH|REPORT_ERRORS|STREAM_OPEN_FOR_INCLUDE, &opened_path);
+	
+	if (stream)
+	{
+		if (opened_path) {
+			efree(opened_path);
+			opened_path = NULL;
+		}
+		php_stream_close(stream);
+		return SUCCESS;
+	}
+	
+	return FAILURE;
 }
 
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )

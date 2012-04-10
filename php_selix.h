@@ -36,6 +36,11 @@ typedef struct _zend_compile_args {
 #endif
 } zend_compile_args;
 
+typedef struct _zend_compile_retval {
+	zend_op_array *op_array;
+	int bailout;
+} zend_compile_retval;
+
 typedef struct _zend_execute_args {
 	zend_op_array *op_array;
 	sigset_t *sigmask;
@@ -43,6 +48,10 @@ typedef struct _zend_execute_args {
 	TSRMLS_D;
 #endif
 } zend_execute_args;
+
+typedef struct _zend_execute_retval {
+	int bailout;
+} zend_execute_retval;
 
 PHP_MINIT_FUNCTION(selix);
 PHP_MSHUTDOWN_FUNCTION(selix);
