@@ -1,7 +1,10 @@
-PHP_ARG_ENABLE(selix, whether to enable SELinux support,
+PHP_ARG_ENABLE(selix, whether to enable selix extension,
 [  --enable-selix           Enable SELinux support])
 
 if test "$PHP_SELIX" != "no"; then
+  CFLAGS="$CFLAGS -Wall -fvisibility=hidden"
+  
+  # Check libselinux
   PHP_CHECK_LIBRARY(selinux, is_selinux_enabled, 
   [
     PHP_ADD_LIBRARY(selinux, 1, SELIX_SHARED_LIBADD)
@@ -12,6 +15,15 @@ if test "$PHP_SELIX" != "no"; then
     -lselinux
   ])
 
+  PHP_CHECK_LIBRARY(lttng-ust-ctl, ustctl_create_session, 
+  [
+    AC_DEFINE(HAVE_LTTNGUST,1,[ ])
+    PHP_ADD_LIBRARY(dl, 1, SELIX_SHARED_LIBADD)
+    PHP_ADD_LIBRARY(lttng-ust, 1, SELIX_SHARED_LIBADD)
+  ],[],[
+    -llttng-ust-ctl -ldl
+  ])
+  
   PHP_NEW_EXTENSION(selix, selix.c, $ext_shared,,,,yes)
   PHP_SUBST(SELIX_SHARED_LIBADD)
 fi

@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include <stdio.h>
 #include <signal.h>
 #include <pthread.h>
 #include <selinux/selinux.h>
@@ -13,6 +15,12 @@
 #include "ext/standard/info.h"
 #include "zend_extensions.h"
 #include "php_selix.h"
+
+#ifdef HAVE_LTTNGUST
+#define TRACEPOINT_DEFINE
+#define TRACEPOINT_CREATE_PROBES
+#include "selix_trace_provider.h"
+#endif
 
 ZEND_DECLARE_MODULE_GLOBALS(selix)
 static PHP_GINIT_FUNCTION(selix);
@@ -192,7 +200,7 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 	zend_compile_retval *retval;
 	zend_op_array *compiled_op_array;
 	int bailout;
-	zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
+	// zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
 	// php_var_dump(&server, 1 TSRMLS_CC);
 	
 	// Call the original handler if SELinux is disabled
@@ -444,7 +452,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		freecon( current_ctx );
 		context_free( context );
-		zend_errorf(E_ERROR, "setcon() failed");
+		zend_error(E_ERROR, "setcon() failed");
 		return 1;
 	}	
 	selix_debug(NULL TSRMLS_CC, "[SC] %s (from %s)<br>", new_ctx, current_ctx );
@@ -463,7 +471,6 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 	zval **data;
 	HashTable *ht;
 	int i;
-	char *str;
 	
 	if (!array_ptr || Z_TYPE_P(array_ptr) != IS_ARRAY)
 		return;
@@ -497,13 +504,17 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 }
 
 /*
- * It calls php's wrapper to force a open/read on the file.
- * This is used to verify whether the current context has the permissions to read the file.
+ * It calls php's wrapper to open/read the handle's filename.
+ * TODO: proper handle the case where filename="-" (stdin) with cli SAPI
  */
 int check_read_permission( zend_file_handle *handle )
 {
-	int retval = 0;
 	char *opened_path;
+
+#ifdef HAVE_LTTNGUST
+	tracepoint(PHP_selix, check_read_permission, handle->filename);
+#endif	
+
 	php_stream *stream = php_stream_open_wrapper((char *)handle->filename, "rb", 
 			USE_PATH|REPORT_ERRORS|STREAM_OPEN_FOR_INCLUDE, &opened_path);
 	
