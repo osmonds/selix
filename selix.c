@@ -129,7 +129,7 @@ PHP_MINIT_FUNCTION(selix)
 		return FAILURE;
 	}
 	// SELinux enabled
-	
+
 	return SUCCESS;
 }
 
@@ -284,6 +284,9 @@ void *do_zend_compile_file( void *data )
 		retval->op_array = NULL;
 	}
 	else {
+#ifdef HAVE_LTTNGUST	
+		tracepoint(PHP_selix, zend_compile_file, args->file_handle->filename);
+#endif
 		// Catch compile errors
 		zend_try {
 			retval->op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
@@ -309,9 +312,7 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 		pthread_t execute_thread;
 		sigset_t sigmask, old_sigmask;
 		zend_execute_args args;
-	
-		// selix_debug(NULL TSRMLS_CC, "[*] (%u/%u) Executing in new security context %s<br>", CG(in_compilation), EG(in_execution), op_array->filename );
-	
+
 		memset( &args, 0, sizeof(zend_execute_args) );
 		args.op_array = op_array;
 		args.sigmask = &old_sigmask;
@@ -368,6 +369,10 @@ void *do_zend_execute( void *data )
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
 	set_context( SELIX_G(separams_values[SCP_DOMAIN_IDX]), SELIX_G(separams_values[SCP_RANGE_IDX]) TSRMLS_CC );
+	
+#ifdef HAVE_LTTNGUST	
+	tracepoint(PHP_selix, zend_execute, args->op_array->filename, args->op_array->line_start);
+#endif
 	
 	// Catch errors
 	zend_try {
@@ -454,8 +459,10 @@ int set_context( char *domain, char *range TSRMLS_DC )
 		context_free( context );
 		zend_error(E_ERROR, "setcon() failed");
 		return 1;
-	}	
-	selix_debug(NULL TSRMLS_CC, "[SC] %s (from %s)<br>", new_ctx, current_ctx );
+	}
+#ifdef HAVE_LTTNGUST
+	tracepoint(PHP_selix, security_context_change, new_ctx, current_ctx);
+#endif
 	
 	// Free previously allocated context_t and so the new_ctx pointer isn't valid anymore
 	context_free( context );
@@ -491,9 +498,9 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 		{
 			if (Z_TYPE_PP(data) == IS_STRING)
 				SELIX_G(separams_values[i]) = estrdup( Z_STRVAL_PP(data) );
-			
-			// selix_debug(NULL TSRMLS_CC, "[*] Got %s => %s <br>", SELIX_G(separams_names[i]), SELIX_G(separams_values[i]) );
-			
+#ifdef HAVE_LTTNGUST
+			tracepoint(PHP_selix, read_security_context, SELIX_G(separams_names[i]), SELIX_G(separams_values[i]));
+#endif
 			// Do not expose SELinux security context to scripts
 			zend_hash_del( ht, env_name, env_name_length + 1 );
 			zend_hash_del( ht, redirect_param, redirect_len );
@@ -504,8 +511,8 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 }
 
 /*
- * It calls php's wrapper to open/read the handle's filename.
- * TODO: proper handle the case where filename="-" (stdin) with cli SAPI
+ * It calls php wrapper to open/read the file pointed by handle's filename.
+ * TODO: proper handling of the case where filename="-" (stdin) with cli SAPI
  */
 int check_read_permission( zend_file_handle *handle )
 {
@@ -513,10 +520,9 @@ int check_read_permission( zend_file_handle *handle )
 
 #ifdef HAVE_LTTNGUST
 	tracepoint(PHP_selix, check_read_permission, handle->filename);
-#endif	
-
+#endif
 	php_stream *stream = php_stream_open_wrapper((char *)handle->filename, "rb", 
-			USE_PATH|REPORT_ERRORS|STREAM_OPEN_FOR_INCLUDE, &opened_path);
+			USE_PATH|STREAM_OPEN_FOR_INCLUDE, &opened_path);
 	
 	if (stream)
 	{

@@ -15,9 +15,40 @@ TRACEPOINT_EVENT( PHP_selix, check_read_permission,
 		ctf_string(file, fname)
 	)
 )
+TRACEPOINT_EVENT( PHP_selix, read_security_context,
+	TP_ARGS(const char *, name, const char *, value),
+	TP_FIELDS(
+		ctf_string(attribute, name)
+		ctf_string(value, value)
+	)
+)
+TRACEPOINT_EVENT( PHP_selix, security_context_change,
+	TP_ARGS(const char *, newctx, const char *, oldctx),
+	TP_FIELDS(
+		ctf_string(new, newctx)
+		ctf_string(old, oldctx)
+	)
+)
+TRACEPOINT_EVENT( PHP_selix, zend_execute,
+	TP_ARGS(const char *, fname, zend_uint, lineno),
+	TP_FIELDS(
+		ctf_string(filename, fname)
+		ctf_integer(zend_uint, line, lineno)
+	)
+)
+TRACEPOINT_EVENT( PHP_selix, zend_compile_file,
+	TP_ARGS(const char *, fname),
+	TP_FIELDS(
+		ctf_string(filename, fname)
+	)
+)
 
 /* Log levels */
-TRACEPOINT_LOGLEVEL( PHP_selix, check_read_permission, TRACE_INFO)
+TRACEPOINT_LOGLEVEL( PHP_selix, check_read_permission, TRACE_DEBUG_FUNCTION)
+TRACEPOINT_LOGLEVEL( PHP_selix, read_security_context, TRACE_DEBUG_MODULE)
+TRACEPOINT_LOGLEVEL( PHP_selix, security_context_change, TRACE_DEBUG_FUNCTION)
+TRACEPOINT_LOGLEVEL( PHP_selix, zend_execute, TRACE_DEBUG_FUNCTION)
+TRACEPOINT_LOGLEVEL( PHP_selix, zend_compile_file, TRACE_DEBUG_FUNCTION)
 
 #endif
 
