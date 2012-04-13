@@ -206,7 +206,11 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 	// Call the original handler if SELinux is disabled
 	if (is_selinux_enabled() < 1)
 		return old_zend_compile_file( file_handle, type TSRMLS_CC );
-	
+		
+#ifdef HAVE_LTTNGUST	
+		tracepoint(PHP_selix, zend_compile_file, file_handle->filename, 
+				(file_handle->opened_path ? file_handle->opened_path : "NULL"), EG(in_execution));
+#endif	
 	/*
 	 * First script compilation is done with EG(in_execution)=0 
 	 * then subsequent calls (include/require) with EG(in_execution)=1
@@ -283,10 +287,8 @@ void *do_zend_compile_file( void *data )
 					
 		retval->op_array = NULL;
 	}
-	else {
-#ifdef HAVE_LTTNGUST	
-		tracepoint(PHP_selix, zend_compile_file, args->file_handle->filename);
-#endif
+	else
+	{
 		// Catch compile errors
 		zend_try {
 			retval->op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
@@ -305,6 +307,10 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 {
 	zend_execute_retval *retval;
 	int bailout;
+	
+#ifdef HAVE_LTTNGUST	
+	tracepoint(PHP_selix, zend_execute, op_array->filename, op_array->line_start, EG(in_execution));
+#endif
 	
 	// Nested calls are already executed in proper security context
 	if (!EG(in_execution) && is_selinux_enabled() == 1)
@@ -369,10 +375,6 @@ void *do_zend_execute( void *data )
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
 	set_context( SELIX_G(separams_values[SCP_DOMAIN_IDX]), SELIX_G(separams_values[SCP_RANGE_IDX]) TSRMLS_CC );
-	
-#ifdef HAVE_LTTNGUST	
-	tracepoint(PHP_selix, zend_execute, args->op_array->filename, args->op_array->line_start);
-#endif
 	
 	// Catch errors
 	zend_try {
@@ -518,11 +520,12 @@ int check_read_permission( zend_file_handle *handle )
 {
 	char *opened_path;
 
-#ifdef HAVE_LTTNGUST
-	tracepoint(PHP_selix, check_read_permission, handle->filename);
-#endif
 	php_stream *stream = php_stream_open_wrapper((char *)handle->filename, "rb", 
 			USE_PATH|STREAM_OPEN_FOR_INCLUDE, &opened_path);
+
+#ifdef HAVE_LTTNGUST
+	tracepoint(PHP_selix, check_read_permission, handle->filename, (opened_path ? opened_path : "NULL"));
+#endif
 	
 	if (stream)
 	{

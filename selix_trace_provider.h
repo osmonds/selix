@@ -10,9 +10,10 @@
 
 /* Tracepoints */
 TRACEPOINT_EVENT( PHP_selix, check_read_permission,
-	TP_ARGS(const char *, fname),
+	TP_ARGS(const char *, fname, char *, opened),
 	TP_FIELDS(
-		ctf_string(file, fname)
+		ctf_string(path, fname)
+		ctf_string(opened_path, opened)
 	)
 )
 TRACEPOINT_EVENT( PHP_selix, read_security_context,
@@ -30,16 +31,19 @@ TRACEPOINT_EVENT( PHP_selix, security_context_change,
 	)
 )
 TRACEPOINT_EVENT( PHP_selix, zend_execute,
-	TP_ARGS(const char *, fname, zend_uint, lineno),
+	TP_ARGS(const char *, fname, zend_uint, lineno, zend_bool, exec),
 	TP_FIELDS(
-		ctf_string(filename, fname)
+		ctf_string(path, fname)
 		ctf_integer(zend_uint, line, lineno)
+		ctf_integer(zend_bool, in_execution, exec)
 	)
 )
 TRACEPOINT_EVENT( PHP_selix, zend_compile_file,
-	TP_ARGS(const char *, fname),
+	TP_ARGS(const char *, fname, char *, opened, zend_bool, exec),
 	TP_FIELDS(
-		ctf_string(filename, fname)
+		ctf_string(path, fname)
+		ctf_string(opened_path, opened)
+		ctf_integer(zend_bool, in_execution, exec)
 	)
 )
 
