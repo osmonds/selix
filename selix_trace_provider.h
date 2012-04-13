@@ -10,8 +10,9 @@
 
 /* Tracepoints */
 TRACEPOINT_EVENT( PHP_selix, check_read_permission,
-	TP_ARGS(const char *, fname, char *, opened),
+	TP_ARGS(const char *, type, const char *, fname, char *, opened),
 	TP_FIELDS(
+		ctf_string(type, type)
 		ctf_string(path, fname)
 		ctf_string(opened_path, opened)
 	)

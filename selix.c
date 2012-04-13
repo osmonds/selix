@@ -1,5 +1,8 @@
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <pthread.h>
 #include <selinux/selinux.h>
@@ -514,30 +517,82 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 
 /*
  * It calls php wrapper to open/read the file pointed by handle's filename.
- * TODO: proper handling of the case where filename="-" (stdin) with cli SAPI
+ * PG(allow_url_fopen)
  */
 int check_read_permission( zend_file_handle *handle )
 {
-	char *opened_path;
-
-	php_stream *stream = php_stream_open_wrapper((char *)handle->filename, "rb", 
-			USE_PATH|STREAM_OPEN_FOR_INCLUDE, &opened_path);
-
+	char *type = "UNKNOWN";
+	int fd;
+	
 #ifdef HAVE_LTTNGUST
-	tracepoint(PHP_selix, check_read_permission, handle->filename, (opened_path ? opened_path : "NULL"));
-#endif
-	
-	if (stream)
-	{
-		if (opened_path) {
-			efree(opened_path);
-			opened_path = NULL;
-		}
-		php_stream_close(stream);
-		return SUCCESS;
+	switch (handle->type) {
+		case ZEND_HANDLE_FILENAME:
+			type = "ZEND_HANDLE_FILENAME";
+			break;
+		case ZEND_HANDLE_FD:
+			type = "ZEND_HANDLE_FD";
+			break;
+		case ZEND_HANDLE_FP:
+			type = "ZEND_HANDLE_FP";
+			break;
+		case ZEND_HANDLE_STREAM:
+			type = "ZEND_HANDLE_STREAM";
+			break;
+		case ZEND_HANDLE_MAPPED:
+			type = "ZEND_HANDLE_MAPPED";
+			break;
 	}
-	
-	return FAILURE;
+	tracepoint(PHP_selix, check_read_permission, type, handle->filename, (handle->opened_path ? handle->opened_path : "NULL"));
+#endif
+
+	switch (handle->type) {
+		case ZEND_HANDLE_FILENAME:
+			/* 
+			 * Stream is going to be opened by zend_compile_file will execute
+			 * in caller's security context.
+			 */
+			return SUCCESS;
+		
+		case ZEND_HANDLE_FD:
+			/*
+			 * File descriptor already opened in pre-zend_compile_file security context.
+			 * It must be checked for read permission.
+			 */
+			if (handle->handle.fd == STDIN_FILENO || handle->handle.fd == STDOUT_FILENO ||
+			 		handle->handle.fd == STDERR_FILENO)
+				return SUCCESS;
+				
+			assert( handle->opened_path && strlen(handle->opened_path) > 0 );
+			fd = open( handle->opened_path, O_RDONLY, 0666 );
+			if (fd == -1)
+				return FAILURE;
+			
+			close(fd);
+			return SUCCESS;
+		
+		case ZEND_HANDLE_FP:
+			if (handle->handle.fp == stdin || handle->handle.fp == stdout || handle->handle.fp == stderr)
+				return SUCCESS;
+			
+			assert( handle->opened_path && strlen(handle->opened_path) > 0 );
+			fd = open( handle->opened_path, O_RDONLY, 0666 );
+			if (fd == -1)
+				return FAILURE;
+			
+			close(fd);
+			return SUCCESS;
+		
+		case ZEND_HANDLE_STREAM:
+			/* TODO */
+			return SUCCESS;
+		
+		case ZEND_HANDLE_MAPPED:
+			/* TODO */
+			return SUCCESS;
+			
+		default:
+			return FAILURE;
+	}
 }
 
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
