@@ -274,33 +274,31 @@ void *do_zend_compile_file( void *data )
 #endif
 	set_context( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC );	
 
-	/*
-	 * Caller may have already opened the file in previous context.
-	 * Permissions must be re-checked.
-	 */
-	if (check_read_permission( args->file_handle ) == FAILURE)
-	{
-		if (args->type == ZEND_REQUIRE)
+	// Catch compile errors
+	zend_try {
+		/*
+		 * Caller may have already opened the file in previous context.
+		 * Permissions must be re-checked.
+		 */
+		if (check_read_permission( args->file_handle ) == FAILURE)
 		{
-			zend_message_dispatcher(ZMSG_FAILED_REQUIRE_FOPEN, args->file_handle->filename TSRMLS_CC);
-			retval->bailout = 1;
+			if (args->type == ZEND_REQUIRE)
+			{
+				zend_message_dispatcher(ZMSG_FAILED_REQUIRE_FOPEN, args->file_handle->filename TSRMLS_CC);
+				retval->bailout = 1;
+			}
+			else
+				zend_message_dispatcher(ZMSG_FAILED_INCLUDE_FOPEN, args->file_handle->filename TSRMLS_CC);
+					
+			retval->op_array = NULL;
 		}
 		else
-			zend_message_dispatcher(ZMSG_FAILED_INCLUDE_FOPEN, args->file_handle->filename TSRMLS_CC);
-					
-		retval->op_array = NULL;
-	}
-	else
-	{
-		// Catch compile errors
-		zend_try {
 			retval->op_array = old_zend_compile_file( args->file_handle, args->type TSRMLS_CC );
-		} zend_catch {
-			retval->bailout = 1;
-		} zend_end_try();
-	}
+	} zend_catch {
+		retval->bailout = 1;
+	} zend_end_try();
 		
-	return retval;
+	pthread_exit(retval);
 }
 
 /*
@@ -366,9 +364,9 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 void *do_zend_execute( void *data )
 {
 	zend_execute_args *args = (zend_execute_args *)data;
-	zend_compile_retval *retval = emalloc( sizeof(zend_compile_retval) );
+	zend_execute_retval *retval = emalloc( sizeof(zend_execute_retval) );
 
-	memset( retval, 0, sizeof(zend_compile_retval) );
+	memset( retval, 0, sizeof(zend_execute_retval) );
 	
 	// Set parent's signal mask
 	pthread_sigmask( SIG_SETMASK, args->sigmask, NULL );
@@ -386,7 +384,7 @@ void *do_zend_execute( void *data )
 		retval->bailout = 1;
 	} zend_end_try();
 	
-	return retval;
+	pthread_exit(retval);
 }
 
 /*
@@ -517,13 +515,13 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 
 /*
  * It calls php wrapper to open/read the file pointed by handle's filename.
- * PG(allow_url_fopen)
+ * TODO: investigate remote incules PG(allow_url_fopen)
  */
 int check_read_permission( zend_file_handle *handle )
 {
 	char *type = "UNKNOWN";
 	int fd;
-	
+		
 #ifdef HAVE_LTTNGUST
 	switch (handle->type) {
 		case ZEND_HANDLE_FILENAME:
@@ -548,51 +546,33 @@ int check_read_permission( zend_file_handle *handle )
 	switch (handle->type) {
 		case ZEND_HANDLE_FILENAME:
 			/* 
-			 * Stream is going to be opened by zend_compile_file will execute
-			 * in caller's security context.
+			 * Stream is going to be opened by zend_compile_file which will execute
+			 * in caller's security context (i.e. do_zend_compile_file).
 			 */
-			return SUCCESS;
-		
+			return SUCCESS;	
 		case ZEND_HANDLE_FD:
-			/*
-			 * File descriptor already opened in pre-zend_compile_file security context.
-			 * It must be checked for read permission.
-			 */
 			if (handle->handle.fd == STDIN_FILENO || handle->handle.fd == STDOUT_FILENO ||
 			 		handle->handle.fd == STDERR_FILENO)
 				return SUCCESS;
-				
-			assert( handle->opened_path && strlen(handle->opened_path) > 0 );
-			fd = open( handle->opened_path, O_RDONLY, 0666 );
-			if (fd == -1)
-				return FAILURE;
-			
-			close(fd);
-			return SUCCESS;
-		
 		case ZEND_HANDLE_FP:
 			if (handle->handle.fp == stdin || handle->handle.fp == stdout || handle->handle.fp == stderr)
-				return SUCCESS;
-			
+				return SUCCESS;		
+		case ZEND_HANDLE_STREAM:
+		case ZEND_HANDLE_MAPPED:
+			/*
+			 * File descriptor already opened in pre-zend_compile_file security context.
+			 * It must be checked for read permission.
+			 */	
 			assert( handle->opened_path && strlen(handle->opened_path) > 0 );
 			fd = open( handle->opened_path, O_RDONLY, 0666 );
 			if (fd == -1)
 				return FAILURE;
-			
+
 			close(fd);
 			return SUCCESS;
-		
-		case ZEND_HANDLE_STREAM:
-			/* TODO */
-			return SUCCESS;
-		
-		case ZEND_HANDLE_MAPPED:
-			/* TODO */
-			return SUCCESS;
-			
-		default:
-			return FAILURE;
 	}
+	
+	return FAILURE;
 }
 
 void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
