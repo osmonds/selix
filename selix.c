@@ -515,7 +515,7 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
 
 /*
  * It calls php wrapper to open/read the file pointed by handle's filename.
- * TODO: investigate remote incules PG(allow_url_fopen)
+ * TODO: investigate remote includes PG(allow_url_fopen)
  */
 int check_read_permission( zend_file_handle *handle )
 {
