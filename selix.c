@@ -39,7 +39,6 @@ void *do_zend_execute( void *data );
 int set_context( char *domain, char *range TSRMLS_DC );
 void filter_http_globals(zval *array_ptr TSRMLS_DC);
 int check_read_permission( zend_file_handle *handle );
-void selix_debug( const char *docref TSRMLS_DC, const char *format, ... );
 
 int zend_selix_initialised = 0;
 
@@ -79,7 +78,6 @@ STD_PHP_INI_ENTRY("selix.domain_env", "SELINUX_DOMAIN", PHP_INI_SYSTEM, OnUpdate
 STD_PHP_INI_ENTRY("selix.range_env", "SELINUX_RANGE", PHP_INI_SYSTEM, OnUpdateString, range_env, zend_selix_globals, selix_globals)
 STD_PHP_INI_ENTRY("selix.compile_domain_env", "SELINUX_COMPILE_DOMAIN", PHP_INI_SYSTEM, OnUpdateString, compile_domain_env, zend_selix_globals, selix_globals)
 STD_PHP_INI_ENTRY("selix.compile_range_env", "SELINUX_COMPILE_RANGE", PHP_INI_SYSTEM, OnUpdateString, compile_range_env, zend_selix_globals, selix_globals)
-
 PHP_INI_END()
 
 /*
@@ -449,7 +447,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	
 	if (!strcmp( current_ctx, new_ctx ))
 	{
-		// selix_debug(NULL TSRMLS_CC, "[SC] No context chages made<br>", new_ctx );
+		// No context chages made
 		context_free( context );
 		freecon( current_ctx );
 		return 1;
@@ -519,10 +517,10 @@ void filter_http_globals( zval *array_ptr TSRMLS_DC )
  */
 int check_read_permission( zend_file_handle *handle )
 {
-	char *type = "UNKNOWN";
 	int fd;
 		
 #ifdef HAVE_LTTNGUST
+	char *type = "UNKNOWN";
 	switch (handle->type) {
 		case ZEND_HANDLE_FILENAME:
 			type = "ZEND_HANDLE_FILENAME";
@@ -573,21 +571,6 @@ int check_read_permission( zend_file_handle *handle )
 	}
 	
 	return FAILURE;
-}
-
-void selix_debug( const char *docref TSRMLS_DC, const char *format, ... )
-{
-	va_list args;
-	char *str;
-
-	if (!SELIX_G(verbose))
-		return;
-
-	va_start(args, format);
-	vasprintf( &str, format, args );
-	php_write( str, strlen(str) TSRMLS_CC );
-	free(str);
-	va_end(args);
 }
 
 ZEND_DLEXPORT int selix_zend_startup(zend_extension *extension)
