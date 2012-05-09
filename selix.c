@@ -351,7 +351,7 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 		return;
 	}
 	else
-		return old_zend_execute( op_array );
+		return old_zend_execute( op_array TSRMLS_CC );
 }
 
 /*
@@ -377,7 +377,7 @@ void *do_zend_execute( void *data )
 	
 	// Catch errors
 	zend_try {
-		old_zend_execute( args->op_array );
+		old_zend_execute( args->op_array TSRMLS_CC );
 	} zend_catch {
 		retval->bailout = 1;
 	} zend_end_try();
