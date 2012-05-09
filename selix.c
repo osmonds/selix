@@ -15,8 +15,9 @@
 #include "php.h"
 #include "php_variables.h"
 #include "php_ini.h"
-#include "ext/standard/info.h"
+#include "zend.h"
 #include "zend_extensions.h"
+#include "ext/standard/info.h"
 #include "php_selix.h"
 
 #ifdef HAVE_LTTNGUST
@@ -219,7 +220,7 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 	 * First script compilation is done with EG(in_execution)=0 
 	 * then subsequent calls (include/require) with EG(in_execution)=1
 	 */
-	if (!EG(in_execution))
+	if (UNEXPECTED(!EG(in_execution)))
 		/* 
 		 * TODO
 		 * With cli environment variables are replicated in $_SERVER array,
@@ -315,7 +316,7 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 #endif
 
 	// Nested calls are already executed in proper security context
-	if (EG(in_execution))
+	if (EXPECTED(EG(in_execution)))
 		return old_zend_execute( op_array TSRMLS_CC );
 
 	pthread_t execute_thread;
