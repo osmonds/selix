@@ -48,6 +48,7 @@ TRACEPOINT_EVENT( PHP_selix, zend_compile_file,
 	)
 )
 
+
 /* Log levels */
 TRACEPOINT_LOGLEVEL( PHP_selix, check_read_permission, TRACE_DEBUG_FUNCTION)
 TRACEPOINT_LOGLEVEL( PHP_selix, read_security_context, TRACE_DEBUG_MODULE)

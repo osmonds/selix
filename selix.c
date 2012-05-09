@@ -123,7 +123,14 @@ PHP_MINIT_FUNCTION(selix)
 	
 	ret = is_selinux_enabled();
 	if (!ret)
-		zend_error(E_WARNING, "SELinux is not enabled on the system. This causes selix extension to be off");
+	{
+		/*
+		 * Let php run with the extension enabled by checking is_selinux_enabled in both 
+		 * zend_execute and zend_compile_file turns out to be a bad performance choice.
+		 */
+		zend_error(E_ERROR, "SELinux is not enabled on the system. You must unload this extension!");
+		return FAILURE;
+	}
 	else if (ret < 0)
 	{
 		zend_error(E_ERROR, "is_selinux_enabled() failed. Check your SELinux installation or disable selix extension" );
@@ -203,15 +210,11 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 	int bailout;
 	// zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
 	// php_var_dump(&server, 1 TSRMLS_CC);
-	
-	// Call the original handler if SELinux is disabled
-	if (is_selinux_enabled() < 1)
-		return old_zend_compile_file( file_handle, type TSRMLS_CC );
 		
-#ifdef HAVE_LTTNGUST	
-		tracepoint(PHP_selix, zend_compile_file, file_handle->filename, 
-				(file_handle->opened_path ? file_handle->opened_path : "NULL"), EG(in_execution));
-#endif	
+#ifdef HAVE_LTTNGUST
+	tracepoint(PHP_selix, zend_compile_file, file_handle->filename, 
+			(file_handle->opened_path ? file_handle->opened_path : "NULL"), EG(in_execution));
+#endif
 	/*
 	 * First script compilation is done with EG(in_execution)=0 
 	 * then subsequent calls (include/require) with EG(in_execution)=1
@@ -306,52 +309,48 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 {
 	zend_execute_retval *retval;
 	int bailout;
-	
+
 #ifdef HAVE_LTTNGUST	
 	tracepoint(PHP_selix, zend_execute, op_array->filename, op_array->line_start, EG(in_execution));
 #endif
-	
+
 	// Nested calls are already executed in proper security context
-	if (!EG(in_execution) && is_selinux_enabled() == 1)
-	{
-		pthread_t execute_thread;
-		sigset_t sigmask, old_sigmask;
-		zend_execute_args args;
-
-		memset( &args, 0, sizeof(zend_execute_args) );
-		args.op_array = op_array;
-		args.sigmask = &old_sigmask;
-#ifdef ZTS
-		args.tsrm_ls = TSRMLS_C;
-#endif
-		/*
-		 * Signals must be trasparently delivered to execution thread,
-		 * thus parent thread must mask them all and child thread use parent's mask.
-		 */
-		sigfillset( &sigmask );
-		pthread_sigmask( SIG_SETMASK, &sigmask, &old_sigmask );
-		
-		if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
-			zend_error(E_CORE_ERROR, "pthread_create() error");
-
-		if (pthread_join( execute_thread, (void *)&retval ))
-			zend_error(E_CORE_ERROR, "pthread_join() error");
-		
-		// Restore signal mask
-		pthread_sigmask( SIG_SETMASK, &old_sigmask, NULL );
-
-		assert(retval != NULL);
-		bailout = retval->bailout;
-		efree( retval );
-
-		// On execution error it propagates the exception to caller
-		if (bailout)
-			zend_bailout();
-		
-		return;
-	}
-	else
+	if (EG(in_execution))
 		return old_zend_execute( op_array TSRMLS_CC );
+
+	pthread_t execute_thread;
+	sigset_t sigmask, old_sigmask;
+	zend_execute_args args;
+
+	memset( &args, 0, sizeof(zend_execute_args) );
+	args.op_array = op_array;
+	args.sigmask = &old_sigmask;
+#ifdef ZTS
+	args.tsrm_ls = TSRMLS_C;
+#endif
+	/*
+	 * Signals must be trasparently delivered to execution thread,
+	 * thus parent thread must mask them all and child thread use parent's mask.
+	 */
+	sigfillset( &sigmask );
+	pthread_sigmask( SIG_SETMASK, &sigmask, &old_sigmask );
+	
+	if (pthread_create( &execute_thread, NULL, do_zend_execute, &args ))
+		zend_error(E_CORE_ERROR, "pthread_create() error");
+
+	if (pthread_join( execute_thread, (void *)&retval ))
+		zend_error(E_CORE_ERROR, "pthread_join() error");
+	
+	// Restore signal mask
+	pthread_sigmask( SIG_SETMASK, &old_sigmask, NULL );
+
+	assert(retval != NULL);
+	bailout = retval->bailout;
+	efree( retval );
+
+	// On execution error it propagates the exception to caller
+	if (bailout)
+		zend_bailout();
 }
 
 /*
