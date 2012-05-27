@@ -354,7 +354,7 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 	
 	/*
 	 * Primary script execution finished, shutdown functions are going to be 
-	 * called thus zend_execute handler must be overriden with ours.
+	 * called thus zend_execute handler must be overridden with ours.
 	 */
 	zend_execute = selix_zend_execute;
 
