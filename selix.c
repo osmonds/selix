@@ -315,12 +315,9 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 	tracepoint(PHP_selix, zend_execute, op_array->filename, op_array->line_start, EG(in_execution));
 #endif
 
-	/*
-	 * No need to override nested function calls because they are already
-	 * executed in proper security context.
-	 * This also improves performance.
-	 */
-	zend_execute = old_zend_execute;
+	// Nested calls are already executed in proper security context
+	if (EXPECTED(EG(in_execution)))
+		return old_zend_execute( op_array TSRMLS_CC );
 
 	pthread_t execute_thread;
 	sigset_t sigmask, old_sigmask;
@@ -351,12 +348,6 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 	assert(retval != NULL);
 	bailout = retval->bailout;
 	efree( retval );
-	
-	/*
-	 * Primary script execution finished, shutdown functions are going to be 
-	 * called thus zend_execute handler must be overridden with ours.
-	 */
-	zend_execute = selix_zend_execute;
 
 	// On execution error it propagates the exception to caller
 	if (bailout)
