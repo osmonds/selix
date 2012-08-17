@@ -40,6 +40,7 @@ void *do_zend_execute( void *data );
 int set_context( char *domain, char *range TSRMLS_DC );
 void filter_http_globals(zval *array_ptr TSRMLS_DC);
 int check_read_permission( zend_file_handle *handle );
+int compare_current_context_to( char *domain, char *range TSRMLS_DC );
 
 int zend_selix_initialised = 0;
 
@@ -228,6 +229,10 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 		 */
 		filter_http_globals( PG(http_globals)[TRACK_VARS_SERVER] );
 	
+	// Prevent thread creation if compile context equals current
+	if (!compare_current_context_to( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC ))
+		return old_zend_compile_file( file_handle, type TSRMLS_CC );
+	
 	memset( &args, 0, sizeof(zend_compile_args) );
 #ifndef ZTS
 	args.file_handle = file_handle;
@@ -274,7 +279,7 @@ void *do_zend_compile_file( void *data )
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
 #endif
-	set_context( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC );	
+	set_context( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC );
 
 	// Catch compile errors
 	zend_try {
@@ -310,18 +315,24 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 {
 	zend_execute_retval *retval;
 	int bailout;
+	pthread_t execute_thread;
+	sigset_t sigmask, old_sigmask;
+	zend_execute_args args;
 
 #ifdef HAVE_LTTNGUST	
 	tracepoint(PHP_selix, zend_execute, op_array->filename, op_array->line_start, EG(in_execution));
 #endif
 
-	// Nested calls are already executed in proper security context
+	/*
+	 * Nested calls are already executed in proper security context
+	 * and they are already executed in the proper security context.
+	 */
 	if (EXPECTED(EG(in_execution)))
 		return old_zend_execute( op_array TSRMLS_CC );
-
-	pthread_t execute_thread;
-	sigset_t sigmask, old_sigmask;
-	zend_execute_args args;
+	
+	// Check if executing scripts in default security context is permitted
+	if (!compare_current_context_to( SELIX_G(separams_values[SCP_DOMAIN_IDX]), SELIX_G(separams_values[SCP_RANGE_IDX]) ) && SELIX_G(force_context_change))
+		zend_error(E_CORE_ERROR, "Executing scripts in default security context is disabled. See selix.force_context_change");
 
 	memset( &args, 0, sizeof(zend_execute_args) );
 	args.op_array = op_array;
@@ -386,14 +397,80 @@ void *do_zend_execute( void *data )
 }
 
 /*
+ * It compares the current security context to a new one obtained by
+ * setting domain and range fields from the current.
+ * Returns 0 if equal, 1 if different and < 0 on error.
+ */
+int compare_current_context_to( char *domain, char *range TSRMLS_DC )
+{
+	security_context_t current_ctx, new_ctx; // String representation
+	context_t context;
+	int res;
+	
+	/*
+	 * Comparing context is not defined implicates the one derived from current
+	 * context is the same.
+	 */
+	if ((!domain || strlen(domain) < 1) && (!range || strlen(range) < 1))
+		return 0;
+	
+	// Get current context
+	if (getcon( &current_ctx ) < 0)
+		zend_error(E_CORE_ERROR, "getcon() failed");
+	
+	// Allocates a new context_t (i.e. malloc)
+	context = context_new( current_ctx );
+	if (!context)
+	{
+		freecon( current_ctx );
+		zend_error(E_CORE_ERROR, "context_new() failed");
+	}
+	
+	// Sets values for the new context
+	if (domain && strlen(domain) > 0 && range && strlen(range) > 0)
+	{
+		// Both domain and range
+		context_type_set( context, domain );
+		context_range_set( context, range );	
+	}
+	else if (domain && strlen(domain) > 0 && (!range || strlen(range) < 1))
+	{
+		// Domain only
+		context_type_set( context, domain );		
+	}
+	else if ((!domain || strlen(domain) < 1) && range && strlen(range) > 0)
+	{
+		// Range only
+		context_range_set( context, range );
+	}
+	
+	// Gets a pointer to a string representing the context_t
+	new_ctx = context_str( context );
+	if (!new_ctx)
+	{
+		freecon( current_ctx );
+		context_free( context );
+		zend_error(E_CORE_ERROR, "context_str() failed");
+	}
+	
+	res = strcmp( current_ctx, new_ctx );
+	freecon( current_ctx );
+	context_free( context );
+	return res;
+}
+
+/*
  * It sets the security context of the calling thread to the new one received from
  * environment variables.
  * Returns 0 on success, 1 if no context changes are made (current == new).
  */
 int set_context( char *domain, char *range TSRMLS_DC )
 {
-	security_context_t current_ctx, new_ctx;
+	security_context_t current_ctx, new_ctx; // String representation
 	context_t context;
+	
+	if ((!domain || strlen(domain) < 1) && (!range || strlen(range) < 1))
+		return 0;
 	
 	// Get current context
 	if (getcon( &current_ctx ) < 0)
@@ -428,12 +505,6 @@ int set_context( char *domain, char *range TSRMLS_DC )
 		// Range only
 		context_range_set( context, range );
 	}
-	else
-	{
-		// Execute in default security context if neither domain nor range is defined
-		if (SELIX_G(force_context_change))
-			zend_error(E_CORE_ERROR, "Executing scripts in default security context is disabled. See selix.force_context_change");
-	}	
 	
 	// Gets a pointer to a string representing the context_t
 	new_ctx = context_str( context );
