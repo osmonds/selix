@@ -234,8 +234,8 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 		if ((!SELIX_G(separams_values[SCP_CDOMAIN_IDX]) || strlen(SELIX_G(separams_values[SCP_CDOMAIN_IDX])) < 1) 
 			&& (!SELIX_G(separams_values[SCP_CRANGE_IDX]) || strlen(SELIX_G(separams_values[SCP_CRANGE_IDX])) < 1))
 		{
-			SELIX_G(separams_values[SCP_CDOMAIN_IDX]) = SELIX_G(separams_values[SCP_DOMAIN_IDX]);
-			SELIX_G(separams_values[SCP_CRANGE_IDX]) = SELIX_G(separams_values[SCP_RANGE_IDX]);
+			SELIX_G(separams_values[SCP_CDOMAIN_IDX]) = estrdup(SELIX_G(separams_values[SCP_DOMAIN_IDX]));
+			SELIX_G(separams_values[SCP_CRANGE_IDX]) = estrdup(SELIX_G(separams_values[SCP_RANGE_IDX]));
 		}		
 	}
 	
