@@ -222,12 +222,22 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 	 * then subsequent calls (include/require) with EG(in_execution)=1
 	 */
 	if (UNEXPECTED(!EG(in_execution)))
+	{
 		/* 
 		 * TODO
 		 * With cli environment variables are replicated in $_SERVER array,
 		 * this means $_ENV array must be filtered to hide SELinux parameters.
 		 */
 		filter_http_globals( PG(http_globals)[TRACK_VARS_SERVER] );
+
+		// It assigns execution security context if none is defined for compilation
+		if ((!SELIX_G(separams_values[SCP_CDOMAIN_IDX]) || strlen(SELIX_G(separams_values[SCP_CDOMAIN_IDX])) < 1) 
+			&& (!SELIX_G(separams_values[SCP_CRANGE_IDX]) || strlen(SELIX_G(separams_values[SCP_CRANGE_IDX])) < 1))
+		{
+			SELIX_G(separams_values[SCP_CDOMAIN_IDX]) = SELIX_G(separams_values[SCP_DOMAIN_IDX]);
+			SELIX_G(separams_values[SCP_CRANGE_IDX]) = SELIX_G(separams_values[SCP_RANGE_IDX]);
+		}		
+	}
 	
 	// Prevent thread creation if compile context equals current
 	if (!compare_current_context_to( SELIX_G(separams_values[SCP_CDOMAIN_IDX]), SELIX_G(separams_values[SCP_CRANGE_IDX]) TSRMLS_CC ))
