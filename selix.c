@@ -226,7 +226,7 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 		 */
 		filter_http_globals( PG(http_globals)[TRACK_VARS_SERVER] );
 
-		// It assigns execution security context if none is defined for compilation
+		// It sets execution security context if none is defined for compilation
 		if ((!SELIX_G(separams_values[SCP_CDOMAIN_IDX]) || strlen(SELIX_G(separams_values[SCP_CDOMAIN_IDX])) < 1) 
 			&& (!SELIX_G(separams_values[SCP_CRANGE_IDX]) || strlen(SELIX_G(separams_values[SCP_CRANGE_IDX])) < 1))
 		{
@@ -235,8 +235,6 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 			if (SELIX_G(separams_values[SCP_RANGE_IDX]))
 				SELIX_G(separams_values[SCP_CRANGE_IDX]) = estrdup(SELIX_G(separams_values[SCP_RANGE_IDX]));
 		}
-		
-		//TODO #11 - Check validity of security contextes using security_check_context(security_context_t)
 	}
 	
 	// Prevent thread creation if compile context equals current
@@ -334,8 +332,7 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 #endif
 
 	/*
-	 * Nested calls are already executed in proper security context
-	 * and they are already executed in the proper security context.
+	 * Nested calls are already executed in proper security context.
 	 */
 	if (EXPECTED(EG(in_execution)))
 		return old_zend_execute( op_array TSRMLS_CC );
