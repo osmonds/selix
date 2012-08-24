@@ -77,3 +77,5 @@ ZEND_END_MODULE_GLOBALS(selix)
 #endif
 
 #endif
+
+ZEND_DECLARE_MODULE_GLOBALS(selix)

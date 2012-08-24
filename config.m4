@@ -23,7 +23,10 @@ if test "$PHP_SELIX" != "no"; then
   ],[],[
     -llttng-ust-ctl -ldl
   ])
+
+  selix_sources="selix.c \
+                 selix_utils.c"
   
-  PHP_NEW_EXTENSION(selix, selix.c, $ext_shared,,,,yes)
+  PHP_NEW_EXTENSION(selix, $selix_sources, $ext_shared,,,,yes)
   PHP_SUBST(SELIX_SHARED_LIBADD)
 fi
