@@ -100,7 +100,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	// Get current context
 	if (getcon( &current_ctx ) < 0)
 	{
-		zend_error(E_ERROR, "getcon() failed");
+		zend_error(E_CORE_ERROR, "getcon() failed");
 		return 1;
 	}
 	
@@ -109,7 +109,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	if (!context)
 	{
 		freecon( current_ctx );
-		zend_error(E_ERROR, "context_new() failed");
+		zend_error(E_CORE_ERROR, "context_new() failed");
 		return 1;
 	}
 	
@@ -137,9 +137,13 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		freecon( current_ctx );
 		context_free( context );
-		zend_error(E_ERROR, "context_str() failed");
+		zend_error(E_CORE_ERROR, "context_str() failed");
 		return 1;
 	}
+	
+	// Check the validity of new security context
+	if (security_check_context( new_ctx ))
+		zend_error(E_CORE_ERROR, "Invalid security context %s", new_ctx);
 	
 	if (!strcmp( current_ctx, new_ctx ))
 	{
@@ -154,7 +158,7 @@ int set_context( char *domain, char *range TSRMLS_DC )
 	{
 		freecon( current_ctx );
 		context_free( context );
-		zend_error(E_ERROR, "setcon() failed");
+		zend_error(E_CORE_ERROR, "setcon() failed");
 		return 1;
 	}
 #ifdef HAVE_LTTNGUST
