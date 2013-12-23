@@ -28,10 +28,13 @@
 #include "selix_utils.h"
 
 static PHP_GINIT_FUNCTION(selix);
-
+#if PHP_VERSION_ID >= 50500
+void (*old_zend_execute_ex)(zend_execute_data * execute_data TSRMLS_DC);
+void selix_zend_execute_ex(zend_execute_data * execute_data TSRMLS_DC);
+#else
 void (*old_zend_execute)(zend_op_array *op_array TSRMLS_DC);
 void selix_zend_execute(zend_op_array *op_array TSRMLS_DC);
-
+#endif
 zend_op_array *(*old_zend_compile_file)(zend_file_handle *file_handle, int type TSRMLS_DC);
 zend_op_array *selix_zend_compile_file(zend_file_handle *file_handle, int type TSRMLS_DC);
 
@@ -153,15 +156,19 @@ PHP_RINIT_FUNCTION(selix)
 	// Initialize parameters
 	for (i=0; i < SCP_COUNT; i++)
 		SELIX_G(separams_values[i]) = NULL;
-	
+	zend_error(E_WARNING, "INIT:%s\n",__func__);	
 	/* Override zend_compile_file to check read permission on it for currenct SELinux domain */
 	old_zend_compile_file = zend_compile_file;
 	zend_compile_file = selix_zend_compile_file;
 
 	/* Override zend_execute to execute it in a SELinux context */
+#if PHP_VERSION_ID >= 50500
+	old_zend_execute_ex = zend_execute_ex;
+	zend_execute_ex = selix_zend_execute_ex;
+#else
 	old_zend_execute = zend_execute;
 	zend_execute = selix_zend_execute;
-	
+#endif	
 	return SUCCESS;
 }
 
@@ -176,8 +183,11 @@ PHP_RSHUTDOWN_FUNCTION(selix)
 
 	// Restore handlers
 	zend_compile_file = old_zend_compile_file;
+#if PHP_VERSION_ID >=50500
+	zend_execute_ex = old_zend_execute_ex;	
+#else
 	zend_execute = old_zend_execute;
-	
+#endif	
 	return SUCCESS;
 }
 
@@ -208,7 +218,7 @@ zend_op_array *selix_zend_compile_file( zend_file_handle *file_handle, int type 
 	int bailout;
 	// zval *server = PG(http_globals)[TRACK_VARS_SERVER]; // TRACK_VARS_ENV;
 	// php_var_dump(&server, 1 TSRMLS_CC);
-		
+	zend_error(E_WARNING,"Osmond compile file:%s:<%s>", __func__,file_handle->filename);	
 #ifdef HAVE_LTTNGUST
 	tracepoint(PHP_selix, zend_compile_file, file_handle->filename, 
 			(file_handle->opened_path ? file_handle->opened_path : "NULL"), EG(in_execution));
@@ -282,7 +292,7 @@ void *do_zend_compile_file( void *data )
 	zend_compile_retval *retval = emalloc( sizeof(zend_compile_retval) );
 	
 	memset( retval, 0, sizeof(zend_compile_retval) );
-	
+	zend_error(E_WARNING, "%s",__func__);	
 #ifdef ZTS
 	TSRMLS_FETCH(); // void ***tsrm_ls = (void ***) ts_resource_ex(0, NULL)
 	*TSRMLS_C = *(args->tsrm_ls); // (*tsrm_ls) = *(args->tsrm_ls)
@@ -319,6 +329,13 @@ void *do_zend_compile_file( void *data )
 /*
  * zend_execute() handler
  */
+#if PHP_VERSION_ID >= 50500
+void selix_zend_execute_ex(zend_execute_data * execute_data TSRMLS_DC)
+{
+	old_zend_execute_ex(execute_data);	
+}
+#else
+
 void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 {
 	zend_execute_retval *retval;
@@ -371,7 +388,6 @@ void selix_zend_execute( zend_op_array *op_array TSRMLS_DC )
 	if (bailout)
 		zend_bailout();
 }
-
 /*
  * Executed in a thread.
  * It uses set_context in order to transition to the proper security context,
@@ -402,10 +418,12 @@ void *do_zend_execute( void *data )
 	
 	pthread_exit(retval);
 }
+#endif
 
 ZEND_DLEXPORT int selix_zend_startup(zend_extension *extension)
 {
 	zend_selix_initialised = 1;
+	zend_error(E_WARNING, "OSMOND");
 	return zend_startup_module(&selix_module_entry);
 }
 
